@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -162,6 +163,39 @@ func (m *VMManager) handleList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(vms)
+}
+
+// Shutdown gracefully stops all VMs: sends SIGTERM and waits for them to exit.
+func (m *VMManager) Shutdown() {
+	m.mu.Lock()
+	vms := make([]*VM, 0, len(m.vms))
+	for _, vm := range m.vms {
+		vms = append(vms, vm)
+	}
+	m.mu.Unlock()
+
+	if len(vms) == 0 {
+		return
+	}
+
+	fmt.Printf("Shutting down %d VM(s)...\n", len(vms))
+
+	for _, vm := range vms {
+		if vm.cmd != nil && vm.cmd.Process != nil {
+			fmt.Printf("  SIGTERM → %s (pid %d)\n", vm.Name, vm.cmd.Process.Pid)
+			vm.cmd.Process.Signal(syscall.SIGTERM)
+		}
+	}
+
+	for _, vm := range vms {
+		if vm.cmd != nil {
+			vm.cmd.Wait()
+			fmt.Printf("  %s exited\n", vm.Name)
+		}
+		cleanupNetns(vm.Name, vm.SubnetID)
+	}
+
+	fmt.Println("All VMs stopped")
 }
 
 func (m *VMManager) handleStop(w http.ResponseWriter, r *http.Request) {

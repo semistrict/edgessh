@@ -38,6 +38,7 @@ func main() {
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	<-sig
 	fmt.Println("edgessh-noded shutting down")
+	vmm.Shutdown()
 }
 
 func handleFile(w http.ResponseWriter, r *http.Request) {
