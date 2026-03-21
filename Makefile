@@ -63,18 +63,18 @@ dist/firecracker/firecracker: | $(FC_DIR)
 
 # Build rootfs ext4.gz from Docker image + vminit binary
 dist/firecracker/rootfs.ext4.gz: embed/edgessh-image.tar.gz dist/edgessh-init | $(FC_DIR)
+	# Export container filesystem as tarball
 	docker create --name fc-rootfs-export --platform linux/amd64 edgessh-noded /bin/true
 	docker export fc-rootfs-export > $(FC_DIR)/rootfs.tar
 	docker rm fc-rootfs-export
+	# Extract tarball, add extras, build ext4 from directory
 	rm -rf $(FC_DIR)/rootfs
 	mkdir -p $(FC_DIR)/rootfs
 	tar xf $(FC_DIR)/rootfs.tar -C $(FC_DIR)/rootfs
-	echo "nameserver 8.8.8.8" > $(FC_DIR)/rootfs/etc/resolv.conf
-	chmod 1777 $(FC_DIR)/rootfs/tmp
-	chown -R 0:0 $(FC_DIR)/rootfs/root
 	cp dist/edgessh-init $(FC_DIR)/rootfs/edgessh-init
 	chmod +x $(FC_DIR)/rootfs/edgessh-init
-	$(MKE2FS) -t ext4 -d $(FC_DIR)/rootfs -L rootfs $(FC_DIR)/rootfs.ext4 512M
+	echo "nameserver 8.8.8.8" > $(FC_DIR)/rootfs/etc/resolv.conf
+	$(MKE2FS) -t ext4 -d $(FC_DIR)/rootfs -L rootfs $(FC_DIR)/rootfs.ext4 16G
 	gzip -f $(FC_DIR)/rootfs.ext4
 	rm -rf $(FC_DIR)/rootfs $(FC_DIR)/rootfs.tar
 
