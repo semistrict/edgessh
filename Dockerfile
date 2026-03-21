@@ -4,12 +4,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
+    e2fsprogs \
     git \
     htop \
+    iputils-ping \
+    iproute2 \
+    iptables \
     jq \
     less \
     man-db \
     openssh-client \
+    openssh-server \
     ripgrep \
     sudo \
     tmux \
@@ -25,6 +30,13 @@ RUN echo 'export TERM=xterm-256color' > /etc/profile.d/edgessh.sh && \
     echo '[ "$(basename $0)" != "bash" ] && [ -x /bin/bash ] && exec /bin/bash --login' >> /etc/profile.d/edgessh.sh && \
     echo 'export PS1="\u@\h:\w\$ "' > /root/.bashrc && \
     echo 'cd ~' >> /root/.bashrc
+
+# Pre-configure sshd for when this image is used as a Firecracker rootfs
+# (edgessh-init Go binary is added to the rootfs at build time via Makefile, not here)
+RUN mkdir -p /run/sshd && \
+    ssh-keygen -A && \
+    sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    echo 'root:root' | chpasswd
 
 COPY dist/edgessh-noded /usr/local/bin/edgessh-noded
 RUN chmod +x /usr/local/bin/edgessh-noded

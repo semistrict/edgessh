@@ -2,3 +2,6 @@ dist/
 embed/edgessh-noded
 embed/edgessh-image.tar.gz
 .wrangler/
+scripts/
+daemon
+vminit

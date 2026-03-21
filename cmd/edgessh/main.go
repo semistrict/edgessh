@@ -99,22 +99,43 @@ func dial(cfg *config.Config, name string) (*ssh.Client, error) {
 		return nil, err
 	}
 
-	instanceID, err := apiClient.ResolveInstanceID(cfg.ApplicationID, name)
-	if err != nil {
-		return nil, err
-	}
+	// Retry loop — the container may need a moment after waking before
+	// the SSH tunnel is ready (rollout propagation, container init, etc.)
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			fmt.Fprintf(os.Stderr, "Retrying SSH connection (%d/5)...\n", attempt+1)
+			time.Sleep(3 * time.Second)
+		}
 
-	tunnelCreds, err := apiClient.GetSSHTunnel(instanceID)
-	if err != nil {
-		return nil, err
-	}
+		instanceID, err := apiClient.ResolveInstanceID(cfg.ApplicationID, name)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	conn, err := tunnel.Dial(tunnelCreds.URL, tunnelCreds.Token)
-	if err != nil {
-		return nil, fmt.Errorf("WebSocket dial: %w", err)
-	}
+		tunnelCreds, err := apiClient.GetSSHTunnel(instanceID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	return sshclient.Connect(conn)
+		conn, err := tunnel.Dial(tunnelCreds.URL, tunnelCreds.Token)
+		if err != nil {
+			lastErr = fmt.Errorf("WebSocket dial: %w", err)
+			continue
+		}
+
+		client, err := sshclient.Connect(conn)
+		if err != nil {
+			conn.Close()
+			lastErr = err
+			continue
+		}
+
+		return client, nil
+	}
+	return nil, lastErr
 }
 
 func loginCmd() *cobra.Command {
@@ -212,7 +233,7 @@ func setupCmd() *cobra.Command {
 					Name: "edgessh",
 					Configuration: api.ApplicationConfig{
 						Image:        imageRef,
-						InstanceType: "dev",
+						InstanceType: "standard-3",
 						WranglerSSH: &api.WranglerSSHConfig{Enabled: true},
 						AuthorizedKeys: []api.AuthorizedKey{
 							{Name: "edgessh", PublicKey: strings.TrimSpace(pubKey)},
