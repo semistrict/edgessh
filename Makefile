@@ -1,4 +1,6 @@
-.PHONY: all clean install daemon vminit image build firecracker-assets r2-upload
+LOOPHOLE_SRC := $(HOME)/src/loophole-workspace/loophole
+
+.PHONY: all clean install daemon vminit loophole image build firecracker-assets r2-upload
 
 all: build
 
@@ -15,9 +17,14 @@ vminit: dist/edgessh-init
 dist/edgessh-init: $(shell find internal/vminit -name '*.go') | dist
 	GOOS=linux GOARCH=amd64 go build -o dist/edgessh-init ./internal/vminit/
 
+# Cross-compile loophole for linux/amd64
+loophole: dist/loophole
+dist/loophole: | dist
+	cd $(LOOPHOLE_SRC) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o $(CURDIR)/dist/loophole ./cmd/loophole
+
 # Build the Docker image (host node) and export as gzipped tarball
 image: embed/edgessh-image.tar.gz
-embed/edgessh-image.tar.gz: dist/edgessh-noded Dockerfile
+embed/edgessh-image.tar.gz: dist/edgessh-noded dist/loophole Dockerfile
 	docker build --platform linux/amd64 -t edgessh-noded .
 	docker save edgessh-noded | gzip > embed/edgessh-image.tar.gz
 

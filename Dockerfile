@@ -1,6 +1,7 @@
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    fuse3 \
     bash \
     ca-certificates \
     curl \
@@ -36,6 +37,7 @@ RUN mkdir -p /run/sshd && \
     sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     echo 'root:root' | chpasswd
 
+COPY dist/loophole /usr/local/bin/loophole
 COPY dist/edgessh-noded /usr/local/bin/edgessh-noded
 RUN chmod +x /usr/local/bin/edgessh-noded
 
