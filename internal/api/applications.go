@@ -90,6 +90,22 @@ func (c *Client) GetApplicationByName(name string) (*Application, error) {
 	return nil, fmt.Errorf("application %q not found", name)
 }
 
+func (c *Client) ModifyApplication(appID string, req map[string]interface{}) error {
+	return c.doPATCH(c.containersURL()+"/applications/"+appID, req, nil)
+}
+
+type CreateRolloutRequest struct {
+	Description         string                 `json:"description"`
+	Strategy            string                 `json:"strategy"`
+	Kind                string                 `json:"kind"`
+	StepPercentage      int                    `json:"step_percentage"`
+	TargetConfiguration map[string]interface{} `json:"target_configuration"`
+}
+
+func (c *Client) CreateRollout(appID string, req *CreateRolloutRequest) error {
+	return c.doPOST(fmt.Sprintf("%s/applications/%s/rollouts", c.containersURL(), appID), req, nil)
+}
+
 func (c *Client) DeleteApplication(appID string) error {
 	return c.doDELETE(c.containersURL() + "/applications/" + appID)
 }

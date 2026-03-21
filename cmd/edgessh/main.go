@@ -2,16 +2,19 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/anthropics/edgessh/internal/api"
 	"github.com/anthropics/edgessh/internal/auth"
 	"github.com/anthropics/edgessh/internal/config"
+	"github.com/anthropics/edgessh/internal/sshclient"
 	"github.com/anthropics/edgessh/internal/tunnel"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 )
 
 func main() {
@@ -25,6 +28,7 @@ func main() {
 	root.AddCommand(loginCmd())
 	root.AddCommand(setupCmd())
 	root.AddCommand(createCmd())
+	root.AddCommand(listCmd())
 	root.AddCommand(sshCmd())
 	root.AddCommand(stopCmd())
 	root.AddCommand(exposeCmd())
@@ -34,6 +38,83 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func requireSetup() (*config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.ApplicationID == "" || cfg.WorkerURL == "" {
+		return nil, fmt.Errorf("run 'edgessh setup' first")
+	}
+	return cfg, nil
+}
+
+// ensureRunning wakes the container if it's not already running.
+func ensureRunning(apiClient *api.Client, cfg *config.Config, name string) error {
+	resp, err := apiClient.ListInstances(cfg.ApplicationID)
+	if err != nil {
+		return err
+	}
+
+	for _, do := range resp.DurableObjects {
+		if do.Name == name && do.DeploymentID != "" {
+			// Check if the linked instance is running
+			for _, inst := range resp.Instances {
+				if inst.ID == do.DeploymentID {
+					if inst.CurrentPlacement != nil && inst.CurrentPlacement.Status != nil {
+						if inst.CurrentPlacement.Status.ContainerStatus == "running" {
+							return nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Printf("Container %q not running, waking...\n", name)
+	if err := apiClient.WakeContainer(cfg.WorkerURL, name); err != nil {
+		return err
+	}
+
+	// Wait for it to become available
+	for i := 0; i < 30; i++ {
+		time.Sleep(5 * time.Second)
+		if _, err := apiClient.ResolveInstanceID(cfg.ApplicationID, name); err == nil {
+			return nil
+		}
+		fmt.Print(".")
+	}
+	return fmt.Errorf("timed out waiting for container %q to start", name)
+}
+
+// dial establishes an SSH client connection to a named container,
+// going through the Cloudflare WebSocket tunnel.
+// It auto-wakes the container if it's not running.
+func dial(cfg *config.Config, name string) (*ssh.Client, error) {
+	apiClient := api.NewClient(cfg)
+
+	if err := ensureRunning(apiClient, cfg, name); err != nil {
+		return nil, err
+	}
+
+	instanceID, err := apiClient.ResolveInstanceID(cfg.ApplicationID, name)
+	if err != nil {
+		return nil, err
+	}
+
+	tunnelCreds, err := apiClient.GetSSHTunnel(instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := tunnel.Dial(tunnelCreds.URL, tunnelCreds.Token)
+	if err != nil {
+		return nil, fmt.Errorf("WebSocket dial: %w", err)
+	}
+
+	return sshclient.Connect(conn)
 }
 
 func loginCmd() *cobra.Command {
@@ -46,7 +127,6 @@ func loginCmd() *cobra.Command {
 				return err
 			}
 
-			// Preserve existing setup state if re-logging in
 			existing, _ := config.Load()
 			if existing != nil {
 				cfg.DONamespaceID = existing.DONamespaceID
@@ -82,7 +162,6 @@ func setupCmd() *cobra.Command {
 
 			client := api.NewClient(cfg)
 
-			// 1. Deploy Worker
 			exists, _ := client.WorkerExists()
 			if !exists {
 				fmt.Println("Deploying edgessh Worker (first time)...")
@@ -98,7 +177,6 @@ func setupCmd() *cobra.Command {
 				return fmt.Errorf("enabling workers.dev subdomain: %w", err)
 			}
 
-			// 2. Get DO namespace ID
 			fmt.Println("Waiting for Durable Object namespace...")
 			var nsID string
 			for i := 0; i < 10; i++ {
@@ -113,23 +191,22 @@ func setupCmd() *cobra.Command {
 			}
 			cfg.DONamespaceID = nsID
 
-			// 3. Push image to Cloudflare registry
-			tag := "v1"
+			// Use a timestamp tag so each push creates a distinct image reference
+			tag := fmt.Sprintf("v%d", time.Now().Unix())
 			if err := client.PushImage(tag); err != nil {
 				return err
 			}
 
-			// 4. Create the single application (or update if exists)
+			imageRef := client.ImageRef(tag)
+
 			pubKey, err := config.ReadPublicKey()
 			if err != nil {
 				return fmt.Errorf("reading public key (run 'edgessh login' first): %w", err)
 			}
 
-			imageRef := client.ImageRef(tag)
-
 			app, err := client.GetApplicationByName("edgessh")
 			if err != nil {
-				// Doesn't exist yet, create it
+				// First time: create the application
 				fmt.Println("Creating edgessh application...")
 				app, err = client.CreateApplication(&api.CreateApplicationRequest{
 					Name: "edgessh",
@@ -150,12 +227,32 @@ func setupCmd() *cobra.Command {
 					return fmt.Errorf("creating application: %w", err)
 				}
 			} else {
-				fmt.Println("Application already exists, skipping creation.")
+				// Update existing application to new image and rollout
+				fmt.Printf("Updating application to %s...\n", imageRef)
+				if err := client.ModifyApplication(app.ID, map[string]interface{}{
+					"configuration": map[string]interface{}{
+						"image": imageRef,
+					},
+				}); err != nil {
+					return fmt.Errorf("updating application: %w", err)
+				}
+
+				fmt.Println("Rolling out new image...")
+				if err := client.CreateRollout(app.ID, &api.CreateRolloutRequest{
+					Description:    "edgessh setup " + tag,
+					Strategy:       "rolling",
+					Kind:           "full_auto",
+					StepPercentage: 100,
+					TargetConfiguration: map[string]interface{}{
+						"image": imageRef,
+					},
+				}); err != nil {
+					return fmt.Errorf("creating rollout: %w", err)
+				}
 			}
 
 			cfg.ApplicationID = app.ID
 
-			// 5. Determine worker URL
 			subdomain, err := client.GetWorkersSubdomain()
 			if err != nil {
 				return fmt.Errorf("getting workers subdomain: %w", err)
@@ -175,31 +272,82 @@ func setupCmd() *cobra.Command {
 	}
 }
 
+func listCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List container instances",
+		Aliases: []string{"ls"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := requireSetup()
+			if err != nil {
+				return err
+			}
+
+			client := api.NewClient(cfg)
+			resp, err := client.ListInstances(cfg.ApplicationID)
+			if err != nil {
+				return err
+			}
+
+			if len(resp.DurableObjects) == 0 && len(resp.Instances) == 0 {
+				fmt.Println("No containers found. Use 'edgessh create NAME' to start one.")
+				return nil
+			}
+
+			// Build instance status lookup by ID
+			statusByID := make(map[string]string)
+			for _, inst := range resp.Instances {
+				status := "unknown"
+				if inst.CurrentPlacement != nil && inst.CurrentPlacement.Status != nil {
+					if s := inst.CurrentPlacement.Status.ContainerStatus; s != "" {
+						status = s
+					} else if s := inst.CurrentPlacement.Status.Health; s != "" {
+						status = s
+					}
+				}
+				statusByID[inst.ID] = status
+			}
+
+			fmt.Printf("%-20s %-12s %s\n", "NAME", "STATUS", "INSTANCE ID")
+			for _, do := range resp.DurableObjects {
+				status := "inactive"
+				if do.DeploymentID != "" {
+					if s, ok := statusByID[do.DeploymentID]; ok {
+						status = s
+					}
+				}
+				name := do.Name
+				if name == "" {
+					name = do.ID[:12]
+				}
+				fmt.Printf("%-20s %-12s %s\n", name, status, do.ID)
+			}
+
+			return nil
+		},
+	}
+}
+
 func createCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "create INSTANCE_NAME",
-		Short: "Create a new container instance (DO instance inside the edgessh Worker)",
+		Short: "Create a new container instance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			cfg, err := config.Load()
+			cfg, err := requireSetup()
 			if err != nil {
 				return err
-			}
-			if cfg.ApplicationID == "" || cfg.WorkerURL == "" {
-				return fmt.Errorf("run 'edgessh setup' first")
 			}
 
 			client := api.NewClient(cfg)
 
-			// Wake the DO instance by hitting the Worker
 			fmt.Printf("Starting container %q...\n", name)
 			if err := client.WakeContainer(cfg.WorkerURL, name); err != nil {
 				return err
 			}
 
-			// Poll until we can resolve the instance ID
 			fmt.Println("Waiting for instance to start...")
 			for i := 0; i < 60; i++ {
 				instanceID, err := client.ResolveInstanceID(cfg.ApplicationID, name)
@@ -218,77 +366,27 @@ func createCmd() *cobra.Command {
 	}
 }
 
-func resolveInstance(client *api.Client, cfg *config.Config, name string) (string, error) {
-	return client.ResolveInstanceID(cfg.ApplicationID, name)
-}
-
 func sshCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh INSTANCE_NAME [cmd [args...]]",
 		Short: "SSH into a container instance",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			remoteCmd := args[1:]
-
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			if cfg.ApplicationID == "" {
-				return fmt.Errorf("run 'edgessh setup' first")
-			}
-
-			client := api.NewClient(cfg)
-
-			instanceID, err := resolveInstance(client, cfg, name)
+			cfg, err := requireSetup()
 			if err != nil {
 				return err
 			}
 
-			sshTunnel, err := client.GetSSHTunnel(instanceID)
+			client, err := dial(cfg, args[0])
 			if err != nil {
 				return err
 			}
+			defer client.Close()
 
-			proxy := tunnel.NewProxy(sshTunnel.URL, sshTunnel.Token)
-			port, err := proxy.Start()
-			if err != nil {
-				return err
+			if len(args) > 1 {
+				return sshclient.Exec(client, strings.Join(args[1:], " "))
 			}
-			defer proxy.Close()
-
-			sshArgs := []string{
-				"cloudchamber@127.0.0.1",
-				"-p", fmt.Sprintf("%d", port),
-				"-i", config.PrivateKeyPath(),
-				"-t", // force PTY allocation
-				"-o", "ControlMaster=no",
-				"-o", "ControlPersist=no",
-				"-o", "UserKnownHostsFile=/dev/null",
-				"-o", "StrictHostKeyChecking=no",
-				"-o", "LogLevel=ERROR",
-			}
-			if len(remoteCmd) > 0 {
-				sshArgs = append(sshArgs, "--")
-				sshArgs = append(sshArgs, remoteCmd...)
-			} else {
-				// Interactive: request bash login shell
-				sshArgs = append(sshArgs, "--", "bash", "-l")
-			}
-
-			sshExec := exec.Command("ssh", sshArgs...)
-			sshExec.Stdin = os.Stdin
-			sshExec.Stdout = os.Stdout
-			sshExec.Stderr = os.Stderr
-
-			if err := sshExec.Run(); err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 255 {
-					return fmt.Errorf("SSH connection failed. Is the container running?\nSSH does not automatically wake a container or count as activity")
-				}
-				return err
-			}
-			return nil
+			return sshclient.Shell(client)
 		},
 	}
 }
@@ -303,61 +401,62 @@ func scpCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			src, dst := args[0], args[1]
 
-			var name string
+			// Parse INSTANCE_NAME:/path
+			var name, remotePath, localPath string
+			var download bool
+
 			if parts := strings.SplitN(src, ":", 2); len(parts) == 2 && !strings.HasPrefix(src, "/") {
-				name = parts[0]
+				name, remotePath = parts[0], parts[1]
+				localPath = dst
+				download = true
 			} else if parts := strings.SplitN(dst, ":", 2); len(parts) == 2 && !strings.HasPrefix(dst, "/") {
-				name = parts[0]
+				name, remotePath = parts[0], parts[1]
+				localPath = src
+				download = false
 			} else {
 				return fmt.Errorf("one of SRC or DST must be INSTANCE_NAME:/path")
 			}
 
-			cfg, err := config.Load()
+			cfg, err := requireSetup()
 			if err != nil {
 				return err
 			}
 
-			client := api.NewClient(cfg)
-			instanceID, err := resolveInstance(client, cfg, name)
+			client, err := dial(cfg, name)
 			if err != nil {
 				return err
 			}
+			defer client.Close()
 
-			sshTunnel, err := client.GetSSHTunnel(instanceID)
-			if err != nil {
-				return err
-			}
-
-			proxy := tunnel.NewProxy(sshTunnel.URL, sshTunnel.Token)
-			port, err := proxy.Start()
-			if err != nil {
-				return err
-			}
-			defer proxy.Close()
-
-			rewrite := func(s string) string {
-				if parts := strings.SplitN(s, ":", 2); len(parts) == 2 && parts[0] == name {
-					return fmt.Sprintf("cloudchamber@127.0.0.1:%s", parts[1])
+			if download {
+				f, err := os.Create(localPath)
+				if err != nil {
+					return err
 				}
-				return s
+				defer f.Close()
+
+				if recursive {
+					return sshclient.Exec(client, fmt.Sprintf("tar -cf - -C %q .", remotePath))
+				}
+				return sshclient.Download(client, remotePath, f)
 			}
 
-			scpArgs := []string{
-				"-P", fmt.Sprintf("%d", port),
-				"-o", "UserKnownHostsFile=/dev/null",
-				"-o", "StrictHostKeyChecking=no",
-				"-o", "LogLevel=ERROR",
+			// Upload
+			f, err := os.Open(localPath)
+			if err != nil {
+				return err
 			}
-			if recursive {
-				scpArgs = append(scpArgs, "-r")
-			}
-			scpArgs = append(scpArgs, rewrite(src), rewrite(dst))
+			defer f.Close()
 
-			scpExec := exec.Command("scp", scpArgs...)
-			scpExec.Stdin = os.Stdin
-			scpExec.Stdout = os.Stdout
-			scpExec.Stderr = os.Stderr
-			return scpExec.Run()
+			info, err := f.Stat()
+			if err != nil {
+				return err
+			}
+
+			if recursive && info.IsDir() {
+				return sshclient.Exec(client, fmt.Sprintf("tar -xf - -C %q", remotePath))
+			}
+			return sshclient.Upload(client, f, remotePath, info.Size())
 		},
 	}
 
@@ -371,11 +470,14 @@ func stopCmd() *cobra.Command {
 		Short: "Stop a container instance",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			_ = name
-			// TODO: send stop signal to the DO instance via the Worker
-			fmt.Println("Not yet implemented — stop the container via the Cloudflare dashboard")
-			return nil
+			cfg, err := requireSetup()
+			if err != nil {
+				return err
+			}
+
+			client := api.NewClient(cfg)
+			fmt.Printf("Stopping container %q...\n", args[0])
+			return client.StopContainer(cfg.WorkerURL, args[0])
 		},
 	}
 }
@@ -386,48 +488,59 @@ func exposeCmd() *cobra.Command {
 		Short: "Expose a port from a container via SSH port forwarding",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			port := args[1]
+			name, portStr := args[0], args[1]
 
-			cfg, err := config.Load()
+			cfg, err := requireSetup()
 			if err != nil {
 				return err
 			}
 
-			client := api.NewClient(cfg)
-			instanceID, err := resolveInstance(client, cfg, name)
+			client, err := dial(cfg, name)
 			if err != nil {
 				return err
 			}
+			defer client.Close()
 
-			sshTunnel, err := client.GetSSHTunnel(instanceID)
-			if err != nil {
-				return err
-			}
-
-			proxy := tunnel.NewProxy(sshTunnel.URL, sshTunnel.Token)
-			proxyPort, err := proxy.Start()
-			if err != nil {
-				return err
-			}
-			defer proxy.Close()
-
-			fmt.Printf("Forwarding localhost:%s → %s:%s\n", port, name, port)
+			fmt.Printf("Forwarding localhost:%s -> %s:%s\n", portStr, name, portStr)
 			fmt.Println("Press Ctrl+C to stop")
 
-			sshExec := exec.Command("ssh",
-				"cloudchamber@127.0.0.1",
-				"-p", fmt.Sprintf("%d", proxyPort),
-				"-o", "UserKnownHostsFile=/dev/null",
-				"-o", "StrictHostKeyChecking=no",
-				"-o", "LogLevel=ERROR",
-				"-N",
-				"-L", fmt.Sprintf("%s:localhost:%s", port, port),
-			)
-			sshExec.Stdin = os.Stdin
-			sshExec.Stdout = os.Stdout
-			sshExec.Stderr = os.Stderr
-			return sshExec.Run()
+			listener, err := client.Listen("tcp", "127.0.0.1:"+portStr)
+			if err != nil {
+				return fmt.Errorf("remote listen: %w", err)
+			}
+			defer listener.Close()
+
+			// Actually we want local forwarding: listen locally, forward to remote
+			// ssh.Client doesn't have local forwarding built in, let's do it manually
+			return localForward(client, portStr)
 		},
+	}
+}
+
+func localForward(client *ssh.Client, port string) error {
+	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
+	for {
+		local, err := ln.Accept()
+		if err != nil {
+			return err
+		}
+
+		remote, err := client.Dial("tcp", "127.0.0.1:"+port)
+		if err != nil {
+			local.Close()
+			continue
+		}
+
+		go func() {
+			defer local.Close()
+			defer remote.Close()
+			go io.Copy(remote, local)
+			io.Copy(local, remote)
+		}()
 	}
 }
