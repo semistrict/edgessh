@@ -29,6 +29,9 @@ func main() {
 		setHostname("edgessh-vm")
 	}
 
+	// Fix /tmp permissions (docker export may set wrong owner/mode)
+	os.Chmod("/tmp", 0o1777)
+
 	if pubKey := pubKeyFromCmdline(); pubKey != "" {
 		injectAuthorizedKeys(pubKey)
 	} else {
