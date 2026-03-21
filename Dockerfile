@@ -27,9 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set TERM, then exec bash so the user always gets bash.
 RUN echo 'export TERM=xterm-256color' > /etc/profile.d/edgessh.sh && \
     echo 'export SHELL=/bin/bash' >> /etc/profile.d/edgessh.sh && \
-    echo '[ "$(basename $0)" != "bash" ] && [ -x /bin/bash ] && exec /bin/bash --login' >> /etc/profile.d/edgessh.sh && \
-    echo 'export PS1="\u@\h:\w\$ "' > /root/.bashrc && \
-    echo 'cd ~' >> /root/.bashrc
+    echo '[ "$(basename $0)" != "bash" ] && [ -x /bin/bash ] && exec /bin/bash --login' >> /etc/profile.d/edgessh.sh
 
 # Pre-configure sshd for when this image is used as a Firecracker rootfs
 # (edgessh-init Go binary is added to the rootfs at build time via Makefile, not here)

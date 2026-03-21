@@ -1,4 +1,4 @@
-.PHONY: all clean daemon vminit image build firecracker-assets r2-upload
+.PHONY: all clean install daemon vminit image build firecracker-assets r2-upload
 
 all: build
 
@@ -28,6 +28,10 @@ embed/edgessh-noded: dist/edgessh-noded
 # Build the final CLI with all assets embedded
 build: embed/edgessh-noded embed/edgessh-image.tar.gz
 	go build -o dist/edgessh ./cmd/edgessh/
+
+# Install to $GOPATH/bin
+install: embed/edgessh-noded embed/edgessh-image.tar.gz
+	go install ./cmd/edgessh/
 
 # --- Firecracker VM assets ---
 

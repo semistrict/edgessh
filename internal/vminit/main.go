@@ -23,7 +23,11 @@ func main() {
 	mount("tmpfs", "/dev/shm", "tmpfs", 0)
 	mount("tmpfs", "/run", "tmpfs", 0)
 
-	setHostname("edgessh-vm")
+	if name := paramFromCmdline("edgessh_name"); name != "" {
+		setHostname(name)
+	} else {
+		setHostname("edgessh-vm")
+	}
 
 	if pubKey := pubKeyFromCmdline(); pubKey != "" {
 		injectAuthorizedKeys(pubKey)
@@ -63,26 +67,33 @@ func setHostname(name string) {
 	syscall.Sethostname([]byte(name))
 }
 
-// pubKeyFromCmdline reads /proc/cmdline and extracts the base64-encoded
-// public key from the edgessh_pubkey=<base64> parameter.
-func pubKeyFromCmdline() string {
+// paramFromCmdline reads a key=value parameter from /proc/cmdline.
+func paramFromCmdline(key string) string {
 	data, err := os.ReadFile("/proc/cmdline")
 	if err != nil {
 		return ""
 	}
-
+	prefix := key + "="
 	for _, param := range strings.Fields(string(data)) {
-		if strings.HasPrefix(param, "edgessh_pubkey=") {
-			encoded := strings.TrimPrefix(param, "edgessh_pubkey=")
-			decoded, err := base64.StdEncoding.DecodeString(encoded)
-			if err != nil {
-				fmt.Printf("failed to decode pubkey: %v\n", err)
-				return ""
-			}
-			return strings.TrimSpace(string(decoded))
+		if strings.HasPrefix(param, prefix) {
+			return strings.TrimPrefix(param, prefix)
 		}
 	}
 	return ""
+}
+
+// pubKeyFromCmdline decodes the base64-encoded SSH public key from the kernel cmdline.
+func pubKeyFromCmdline() string {
+	encoded := paramFromCmdline("edgessh_pubkey")
+	if encoded == "" {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		fmt.Printf("failed to decode pubkey: %v\n", err)
+		return ""
+	}
+	return strings.TrimSpace(string(decoded))
 }
 
 func injectAuthorizedKeys(pubKey string) {

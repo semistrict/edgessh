@@ -292,7 +292,7 @@ func (m *VMManager) startVM(name string, subnetID int, pubKey string) (*VM, erro
 func configureVM(sock, name string, subnetID int, guestIP, gwIP, pubKey string) error {
 	// Encode pubkey as base64 for kernel cmdline (no spaces/special chars)
 	encodedKey := base64.StdEncoding.EncodeToString([]byte(pubKey))
-	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/edgessh-init ip=%s::%s:255.255.255.0::eth0:off edgessh_pubkey=%s", guestIP, gwIP, encodedKey)
+	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/edgessh-init ip=%s::%s:255.255.255.0::eth0:off edgessh_name=%s edgessh_pubkey=%s", guestIP, gwIP, name, encodedKey)
 
 	if err := fcAPI(sock, "PUT", "/boot-source", map[string]string{
 		"kernel_image_path": kernelPath,
