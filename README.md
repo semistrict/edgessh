@@ -1,16 +1,83 @@
-edgessh 
+# edgessh
 
+`edgessh` provisions Cloudflare Containers, boots Firecracker microVMs inside them, and connects to those VMs over SSH.
 
-edgessh login
-edgessh create [--sleep-after TIME] INSTANCE_NAME
+## Prerequisites
 
-edgessh ssh INSTANCE_NAME [cmd [args...]] 
+- Go
+- Docker
+- A `loophole` binary on your `PATH`
 
-edgessh scp [-Ra] INSTANCE_NAME:/path/to/file /local/path
+Install `loophole` with:
 
-edgessh scp [-Ra] /local/path INSTANCE_NAME:/path/to/file
+```bash
+go install github.com/semistrict/loophole/cmd/loophole@latest
+```
 
-edgessh stop INSTANACE_NAME
+## Getting Started
 
-edgessh expose INSTANCE_NAME PORT
+You need a Cloudflare API **master token** to bootstrap `edgessh`.
 
+Use a token with:
+
+- `User > API Tokens > Edit`
+
+Create one at:
+
+- https://dash.cloudflare.com/profile/api-tokens
+
+Then run:
+
+```bash
+edgessh setup --token <CLOUDFLARE_MASTER_TOKEN>
+edgessh auth login
+```
+
+`setup` uses the master token to mint scoped Workers, Containers, and R2 credentials for normal operation.
+
+## Common Commands
+
+Create a VM:
+
+```bash
+edgessh create VM_NAME --rootfs ROOTFS_VOLUME
+```
+
+SSH into a VM:
+
+```bash
+edgessh ssh VM_NAME
+edgessh ssh VM_NAME 'uname -a'
+```
+
+Copy files:
+
+```bash
+edgessh scp VM_NAME:/path/to/file ./local-file
+edgessh scp ./local-file VM_NAME:/path/to/file
+```
+
+Expose a port:
+
+```bash
+edgessh expose VM_NAME PORT
+```
+
+Stop or delete a VM:
+
+```bash
+edgessh stop VM_NAME
+edgessh delete VM_NAME
+```
+
+List VMs and containers:
+
+```bash
+edgessh list
+edgessh container list
+```
+
+## Notes
+
+- `edgessh loophole ...` runs `loophole` with the R2 credentials from your `edgessh` config.
+- The default rootfs creation path currently expects repo-local build artifacts such as `dist/edgessh-init` and `dist/edgessh-poweroff`.

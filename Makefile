@@ -1,5 +1,3 @@
-LOOPHOLE_SRC := $(HOME)/src/loophole-workspace/loophole
-
 .PHONY: all clean install daemon vminit vmpoweroff loophole image build firecracker-assets r2-upload deploy deploy-worker
 
 all: build
@@ -24,7 +22,12 @@ dist/edgessh-poweroff: $(shell find cmd/vmpoweroff -name '*.go') | dist
 
 # Cross-compile loophole for linux/amd64 (always rebuild to pick up source changes)
 loophole: | dist
-	cd $(LOOPHOLE_SRC) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o $(CURDIR)/dist/loophole ./cmd/loophole
+	@if ! command -v loophole >/dev/null 2>&1; then \
+		echo "loophole not found on PATH; install it first with 'go install github.com/semistrict/loophole/cmd/loophole@latest'"; \
+		exit 1; \
+	fi
+	cp "$$(command -v loophole)" dist/loophole
+	chmod +x dist/loophole
 
 # Build the Docker image (host node) and export as gzipped tarball
 image: embed/edgessh-image.tar.gz
@@ -47,7 +50,7 @@ install: embed/edgessh-noded embed/edgessh-image.tar.gz
 # --- Firecracker VM assets ---
 
 FC_DIR := dist/firecracker
-MKE2FS := /opt/homebrew/opt/e2fsprogs/sbin/mke2fs
+MKE2FS ?= mke2fs
 R2_BUCKET := edgessh-public
 
 $(FC_DIR):
