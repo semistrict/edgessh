@@ -80,7 +80,7 @@ func requireWorkerSetup() (*config.Config, error) {
 		return nil, err
 	}
 	if cfg.WorkerURL == "" {
-		return nil, fmt.Errorf("set worker_url in ~/.edgessh/config.json or run 'edgessh setup' first")
+		return nil, fmt.Errorf("run 'edgessh auth login --url <WORKER_URL>' or 'edgessh setup' first")
 	}
 	return cfg, nil
 }
@@ -92,7 +92,7 @@ func requireWorkerAccess() (*config.Config, error) {
 	}
 	if cfg.SessionToken == "" {
 		if cfg.WorkerAuthSecret == "" {
-			return nil, fmt.Errorf("run 'edgessh auth set-secret <SECRET>' or 'edgessh auth login --vumela' first")
+			return nil, fmt.Errorf("run 'EDGESSH_SHARED_SECRET=<SECRET> edgessh auth login --url <WORKER_URL>' or 'edgessh auth login --url <WORKER_URL> --vumela' first")
 		}
 		if err := ensureWorkerSession(cfg); err != nil {
 			return nil, err
@@ -125,7 +125,7 @@ func requireTunnelAccess() (*config.Config, error) {
 
 func ensureWorkerSession(cfg *config.Config) error {
 	if cfg.WorkerURL == "" {
-		return fmt.Errorf("set worker_url in ~/.edgessh/config.json or run 'edgessh setup' first")
+		return fmt.Errorf("missing worker URL; run 'edgessh auth login --url <WORKER_URL>' or 'edgessh setup' first")
 	}
 	if cfg.SessionToken != "" {
 		return nil

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/anthropics/edgessh/internal/config"
@@ -39,7 +38,6 @@ func authCmd() *cobra.Command {
 		Short: "Authenticate edgessh against the Worker",
 	}
 	cmd.AddCommand(authLoginCmd())
-	cmd.AddCommand(authSetSecretCmd())
 	cmd.AddCommand(authLogoutCmd())
 	cmd.AddCommand(authStatusCmd())
 	return cmd
@@ -47,19 +45,30 @@ func authCmd() *cobra.Command {
 
 func authLoginCmd() *cobra.Command {
 	var useVumela bool
+	var workerURL string
 	c := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate and store an edgessh session token",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireWorkerSetup()
-			if err != nil {
-				return err
+			cfg, _ := config.Load()
+			if cfg == nil {
+				cfg = &config.Config{}
 			}
 
+			if workerURL == "" {
+				return fmt.Errorf("--url is required")
+			}
+			cfg.WorkerURL = workerURL
+
 			if !useVumela {
-				if cfg.WorkerAuthSecret == "" {
-					return fmt.Errorf("missing worker shared secret; run 'edgessh auth set-secret <SECRET>' or 'edgessh setup' first")
+				sharedSecret := os.Getenv("EDGESSH_SHARED_SECRET")
+				if sharedSecret == "" {
+					return fmt.Errorf("EDGESSH_SHARED_SECRET is required unless --vumela is set")
 				}
+				cfg.WorkerAuthSecret = sharedSecret
+				cfg.SessionToken = ""
+				cfg.SessionSubject = ""
+				cfg.SessionName = ""
 				if err := ensureWorkerSession(cfg); err != nil {
 					return err
 				}
@@ -100,31 +109,9 @@ func authLoginCmd() *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().StringVar(&workerURL, "url", "", "Worker URL, e.g. https://edgessh.<subdomain>.workers.dev")
 	c.Flags().BoolVar(&useVumela, "vumela", false, "Use the Vumela device flow instead of the saved worker shared secret")
 	return c
-}
-
-func authSetSecretCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "set-secret SECRET",
-		Short: "Save the worker shared secret locally and mint a session token",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireWorkerSetup()
-			if err != nil {
-				return err
-			}
-			cfg.WorkerAuthSecret = strings.TrimSpace(args[0])
-			cfg.SessionToken = ""
-			cfg.SessionSubject = ""
-			cfg.SessionName = ""
-			if err := ensureWorkerSession(cfg); err != nil {
-				return err
-			}
-			fmt.Printf("Authenticated as %s (%s)\n", cfg.SessionName, cfg.SessionSubject)
-			return nil
-		},
-	}
 }
 
 func authLogoutCmd() *cobra.Command {
