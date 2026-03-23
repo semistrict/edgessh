@@ -190,7 +190,7 @@ func resetCmd() *cobra.Command {
 		Use:   "reset",
 		Short: "Delete the application and all containers/VMs (destructive)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireSetup()
+			cfg, err := requireCloudflareAccess()
 			if err != nil {
 				return err
 			}

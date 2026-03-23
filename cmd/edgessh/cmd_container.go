@@ -58,7 +58,7 @@ func containerSSHCmd() *cobra.Command {
 		Short: "SSH into a container directly",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireWorkerAccess()
+			cfg, err := requireTunnelAccess()
 			if err != nil {
 				return err
 			}

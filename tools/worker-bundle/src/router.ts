@@ -1,4 +1,4 @@
-import { authenticateRequest, exchangeVumelaToken } from "./auth";
+import { authenticateRequest, exchangeSharedSecret, exchangeVumelaToken } from "./auth";
 import { rewriteDurableObjectPath, schedulerStub } from "./helpers";
 import type { WorkerEnv } from "./types";
 
@@ -8,6 +8,9 @@ export const worker = {
 
     if (url.pathname === "/api/auth/exchange" && request.method === "POST") {
       return handleAuthExchange(request, env, url);
+    }
+    if (url.pathname === "/api/auth/exchange-shared" && request.method === "POST") {
+      return handleSharedSecretExchange(request, env, url);
     }
     if (url.pathname === "/api/auth/me" && request.method === "GET") {
       try {
@@ -62,5 +65,24 @@ async function handleAuthExchange(request: Request, env: WorkerEnv, url: URL) {
     });
   } catch (error: any) {
     return new Response(error.message || "invalid token", { status: 401 });
+  }
+}
+
+async function handleSharedSecretExchange(request: Request, env: WorkerEnv, url: URL) {
+  try {
+    const body = await request.json() as { shared_secret?: string };
+    const secret = body.shared_secret?.trim();
+    if (!secret) {
+      return new Response("missing shared_secret", { status: 400 });
+    }
+    const { sessionToken, claims } = await exchangeSharedSecret(secret, url.origin, env);
+    return Response.json({
+      session_token: sessionToken,
+      sub: claims.sub,
+      name: claims.name || "",
+      expires_in: 30 * 24 * 60 * 60,
+    });
+  } catch (error: any) {
+    return new Response(error.message || "invalid shared secret", { status: 401 });
   }
 }

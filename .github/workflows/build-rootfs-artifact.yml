@@ -1,0 +1,44 @@
+name: Build rootfs artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-rootfs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs
+
+      - name: Install loophole
+        run: |
+          go install github.com/semistrict/loophole/cmd/loophole@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build rootfs image
+        run: |
+          make dist/firecracker/rootfs.ext4.gz
+          sha256sum dist/firecracker/rootfs.ext4.gz > dist/firecracker/rootfs.ext4.gz.sha256
+
+      - name: Upload rootfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-ext4-gz-${{ github.sha }}
+          path: |
+            dist/firecracker/rootfs.ext4.gz
+            dist/firecracker/rootfs.ext4.gz.sha256
+          if-no-files-found: error

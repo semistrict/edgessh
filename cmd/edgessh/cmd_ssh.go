@@ -113,7 +113,7 @@ func scpCmd() *cobra.Command {
 				return fmt.Errorf("one of SRC or DST must be INSTANCE_NAME:/path")
 			}
 
-			cfg, err := requireWorkerAccess()
+			cfg, err := requireTunnelAccess()
 			if err != nil {
 				return err
 			}
@@ -168,7 +168,7 @@ func exposeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, portStr := args[0], args[1]
 
-			cfg, err := requireWorkerAccess()
+			cfg, err := requireTunnelAccess()
 			if err != nil {
 				return err
 			}

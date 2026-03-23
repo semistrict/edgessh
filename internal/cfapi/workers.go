@@ -137,6 +137,21 @@ func (c *Client) UploadWorker(firstTime bool, vars map[string]string) error {
 	)
 }
 
+func (c *Client) PutWorkerSecret(name, value string) error {
+	if name == "" {
+		return fmt.Errorf("missing secret name")
+	}
+	if value == "" {
+		return fmt.Errorf("missing secret value for %s", name)
+	}
+	body := map[string]string{
+		"name": name,
+		"text": value,
+		"type": "secret_text",
+	}
+	return c.doJSONBody("PUT", fmt.Sprintf("%s/scripts/edgessh/secrets", c.workersURL()), body, nil)
+}
+
 // DeleteWorker deletes the edgessh Worker script.
 func (c *Client) DeleteWorker() error {
 	return c.doDELETE(fmt.Sprintf("%s/scripts/edgessh", c.workersURL()))

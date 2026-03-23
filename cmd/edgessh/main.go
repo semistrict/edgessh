@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/edgessh/internal/config"
+	"github.com/anthropics/edgessh/internal/workerapi"
 	"github.com/spf13/cobra"
 )
 
@@ -54,8 +55,16 @@ func main() {
 	}
 }
 
-func requireSetup() (*config.Config, error) {
+func loadConfig() (*config.Config, error) {
 	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func requireSetup() (*config.Config, error) {
+	cfg, err := loadConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -65,15 +74,76 @@ func requireSetup() (*config.Config, error) {
 	return cfg, nil
 }
 
+func requireWorkerSetup() (*config.Config, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.WorkerURL == "" {
+		return nil, fmt.Errorf("set worker_url in ~/.edgessh/config.json or run 'edgessh setup' first")
+	}
+	return cfg, nil
+}
+
 func requireWorkerAccess() (*config.Config, error) {
-	cfg, err := requireSetup()
+	cfg, err := requireWorkerSetup()
 	if err != nil {
 		return nil, err
 	}
 	if cfg.SessionToken == "" {
-		return nil, fmt.Errorf("run 'edgessh auth login' first")
+		if cfg.WorkerAuthSecret == "" {
+			return nil, fmt.Errorf("run 'edgessh auth set-secret <SECRET>' or 'edgessh auth login --vumela' first")
+		}
+		if err := ensureWorkerSession(cfg); err != nil {
+			return nil, err
+		}
 	}
 	return cfg, nil
+}
+
+func requireCloudflareAccess() (*config.Config, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.AccountID == "" || cfg.ApplicationID == "" || cfg.BearerToken() == "" {
+		return nil, fmt.Errorf("run 'edgessh setup --token <CLOUDFLARE_API_TOKEN>' first")
+	}
+	return cfg, nil
+}
+
+func requireTunnelAccess() (*config.Config, error) {
+	cfg, err := requireWorkerAccess()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.AccountID == "" || cfg.ApplicationID == "" || cfg.BearerToken() == "" {
+		return nil, fmt.Errorf("this command still requires Cloudflare API access; run 'edgessh setup --token <CLOUDFLARE_API_TOKEN>' first")
+	}
+	return cfg, nil
+}
+
+func ensureWorkerSession(cfg *config.Config) error {
+	if cfg.WorkerURL == "" {
+		return fmt.Errorf("set worker_url in ~/.edgessh/config.json or run 'edgessh setup' first")
+	}
+	if cfg.SessionToken != "" {
+		return nil
+	}
+	if cfg.WorkerAuthSecret == "" {
+		return fmt.Errorf("missing worker shared secret")
+	}
+
+	wc := workerapi.NewClient(cfg.WorkerURL, "")
+	session, err := wc.ExchangeSharedSecret(cfg.WorkerAuthSecret)
+	if err != nil {
+		return fmt.Errorf("authenticating with worker shared secret: %w", err)
+	}
+
+	cfg.SessionToken = session.SessionToken
+	cfg.SessionSubject = session.Subject
+	cfg.SessionName = session.Name
+	return config.Save(cfg)
 }
 
 func workerWebSocketURL(workerURL, path string, params map[string]string) (string, error) {

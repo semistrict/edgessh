@@ -71,6 +71,35 @@ export async function exchangeVumelaToken(
   return { sessionToken, claims };
 }
 
+export async function exchangeSharedSecret(
+  secret: string,
+  audience: string,
+  env: WorkerEnv,
+): Promise<{ sessionToken: string; claims: SessionClaims }> {
+  if (!secret) {
+    throw new Error("missing shared secret");
+  }
+  if (secret !== env.EDGESSH_AUTH_SECRET) {
+    throw new Error("invalid shared secret");
+  }
+
+  const claims: SessionClaims = {
+    sub: "shared-secret",
+    name: "shared-secret",
+    typ: "edgessh_session",
+  };
+
+  const sessionToken = await new SignJWT(claims)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(audience)
+    .setAudience(audience)
+    .setIssuedAt()
+    .setExpirationTime("30d")
+    .sign(authSecret(env));
+
+  return { sessionToken, claims };
+}
+
 export async function verifySessionToken(
   token: string,
   audience: string,

@@ -73,7 +73,6 @@ This master token is used to mint scoped tokens for Workers, Containers, and R2.
 				"LOOPHOLE_STORE_URL":    cfg.LoopholeStoreURL,
 				"AWS_ACCESS_KEY_ID":     cfg.R2AccessKeyID,
 				"AWS_SECRET_ACCESS_KEY": cfg.R2SecretAccessKey,
-				"EDGESSH_AUTH_SECRET":   cfg.WorkerAuthSecret,
 			}
 
 			exists, _ := client.WorkerExists()
@@ -84,6 +83,9 @@ This master token is used to mint scoped tokens for Workers, Containers, and R2.
 			}
 			if err := client.UploadWorker(!exists, workerVars); err != nil {
 				return fmt.Errorf("uploading worker: %w", err)
+			}
+			if err := client.PutWorkerSecret("EDGESSH_AUTH_SECRET", cfg.WorkerAuthSecret); err != nil {
+				return fmt.Errorf("setting worker auth secret: %w", err)
 			}
 
 			fmt.Println("Enabling workers.dev subdomain...")
@@ -229,10 +231,12 @@ This master token is used to mint scoped tokens for Workers, Containers, and R2.
 					"LOOPHOLE_STORE_URL":    cfg.LoopholeStoreURL,
 					"AWS_ACCESS_KEY_ID":     cfg.R2AccessKeyID,
 					"AWS_SECRET_ACCESS_KEY": cfg.R2SecretAccessKey,
-					"EDGESSH_AUTH_SECRET":   cfg.WorkerAuthSecret,
 				}
 				if err := client.UploadWorker(false, newVars); err != nil {
 					return fmt.Errorf("re-deploying worker with R2 creds: %w", err)
+				}
+				if err := client.PutWorkerSecret("EDGESSH_AUTH_SECRET", cfg.WorkerAuthSecret); err != nil {
+					return fmt.Errorf("refreshing worker auth secret: %w", err)
 				}
 			}
 

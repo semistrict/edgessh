@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/anthropics/edgessh/internal/config"
@@ -35,22 +36,35 @@ type devicePollResponse struct {
 func authCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
-		Short: "Authenticate edgessh against the Worker via Vumela",
+		Short: "Authenticate edgessh against the Worker",
 	}
 	cmd.AddCommand(authLoginCmd())
+	cmd.AddCommand(authSetSecretCmd())
 	cmd.AddCommand(authLogoutCmd())
 	cmd.AddCommand(authStatusCmd())
 	return cmd
 }
 
 func authLoginCmd() *cobra.Command {
-	return &cobra.Command{
+	var useVumela bool
+	c := &cobra.Command{
 		Use:   "login",
-		Short: "Authenticate with Vumela and store an edgessh session token",
+		Short: "Authenticate and store an edgessh session token",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireSetup()
+			cfg, err := requireWorkerSetup()
 			if err != nil {
 				return err
+			}
+
+			if !useVumela {
+				if cfg.WorkerAuthSecret == "" {
+					return fmt.Errorf("missing worker shared secret; run 'edgessh auth set-secret <SECRET>' or 'edgessh setup' first")
+				}
+				if err := ensureWorkerSession(cfg); err != nil {
+					return err
+				}
+				fmt.Printf("Authenticated as %s (%s)\n", cfg.SessionName, cfg.SessionSubject)
+				return nil
 			}
 
 			startResp, err := startExternalDeviceFlow(cfg.WorkerURL)
@@ -86,6 +100,31 @@ func authLoginCmd() *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&useVumela, "vumela", false, "Use the Vumela device flow instead of the saved worker shared secret")
+	return c
+}
+
+func authSetSecretCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set-secret SECRET",
+		Short: "Save the worker shared secret locally and mint a session token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := requireWorkerSetup()
+			if err != nil {
+				return err
+			}
+			cfg.WorkerAuthSecret = strings.TrimSpace(args[0])
+			cfg.SessionToken = ""
+			cfg.SessionSubject = ""
+			cfg.SessionName = ""
+			if err := ensureWorkerSession(cfg); err != nil {
+				return err
+			}
+			fmt.Printf("Authenticated as %s (%s)\n", cfg.SessionName, cfg.SessionSubject)
+			return nil
+		},
+	}
 }
 
 func authLogoutCmd() *cobra.Command {
@@ -93,7 +132,7 @@ func authLogoutCmd() *cobra.Command {
 		Use:   "logout",
 		Short: "Remove the stored edgessh session token",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireSetup()
+			cfg, err := requireWorkerSetup()
 			if err != nil {
 				return err
 			}
@@ -110,7 +149,7 @@ func authStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show the current edgessh auth status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireSetup()
+			cfg, err := requireWorkerSetup()
 			if err != nil {
 				return err
 			}
