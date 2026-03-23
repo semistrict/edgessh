@@ -21,7 +21,7 @@ func runInteractive(session *ssh.Session, echo uint32, start func() error) error
 		if err != nil {
 			return fmt.Errorf("setting raw terminal: %w", err)
 		}
-		defer term.Restore(fd, oldState)
+		defer resetLocalTerminal(fd, oldState)
 
 		w, h, _ := term.GetSize(fd)
 		if err := session.RequestPty("xterm-256color", h, w, ssh.TerminalModes{
@@ -65,6 +65,24 @@ func runInteractive(session *ssh.Session, echo uint32, start func() error) error
 	err = session.Wait()
 	<-copyDone
 	return err
+}
+
+func resetLocalTerminal(fd int, oldState *term.State) {
+	if oldState != nil {
+		_ = term.Restore(fd, oldState)
+	}
+
+	// Undo common interactive modes without clearing the user's screen:
+	// reset attributes, show cursor, leave alt-screen, disable bracketed paste,
+	// disable mouse tracking, and re-enable line wrap.
+	_, _ = os.Stdout.WriteString(
+		"\x1b[0m" + // normal attributes
+			"\x1b[?25h" + // show cursor
+			"\x1b[?1049l" + // leave alt screen
+			"\x1b[?2004l" + // disable bracketed paste
+			"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" + // disable mouse modes
+			"\x1b[?7h", // line wrap on
+	)
 }
 
 // Connect establishes an SSH client connection over an existing net.Conn

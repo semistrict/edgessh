@@ -17,7 +17,7 @@ export const FC_URL =
 
 // ── Machine config ─────────────────────────────────────────────────────────
 
-export const VCPU_COUNT = 1;
+export const VCPU_COUNT = 4;
 export const DAEMON_RESERVE_MIB = 256;
 export const MIN_VM_MEM_MIB = 128;
 export const BALLOON_FLOOR_MIB = 512; // minimum memory left for the guest after balloon inflation

@@ -13,8 +13,15 @@ type Application struct {
 type ApplicationConfig struct {
 	Image          string             `json:"image"`
 	InstanceType   string             `json:"instance_type,omitempty"`
+	VCPU           float64            `json:"vcpu,omitempty"`
+	Memory         string             `json:"memory,omitempty"`
+	Disk           *ApplicationDisk   `json:"disk,omitempty"`
 	WranglerSSH    *WranglerSSHConfig `json:"wrangler_ssh,omitempty"`
 	AuthorizedKeys []AuthorizedKey    `json:"authorized_keys,omitempty"`
+}
+
+type ApplicationDisk struct {
+	Size string `json:"size,omitempty"`
 }
 
 type WranglerSSHConfig struct {

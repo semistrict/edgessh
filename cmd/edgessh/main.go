@@ -34,6 +34,7 @@ func main() {
 	}
 
 	root.AddCommand(setupCmd())
+	root.AddCommand(authCmd())
 	root.AddCommand(createCmd())
 	root.AddCommand(listCmd())
 	root.AddCommand(sshCmd())
@@ -60,6 +61,17 @@ func requireSetup() (*config.Config, error) {
 	}
 	if cfg.ApplicationID == "" || cfg.WorkerURL == "" {
 		return nil, fmt.Errorf("run 'edgessh setup' first")
+	}
+	return cfg, nil
+}
+
+func requireWorkerAccess() (*config.Config, error) {
+	cfg, err := requireSetup()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.SessionToken == "" {
+		return nil, fmt.Errorf("run 'edgessh auth login' first")
 	}
 	return cfg, nil
 }

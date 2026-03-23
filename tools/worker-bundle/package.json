@@ -8,6 +8,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@cloudflare/containers": "file:../../../cloudflare-containers"
+    "@cloudflare/containers": "file:../../../cloudflare-containers",
+    "jose": "^6.1.0"
   }
 }

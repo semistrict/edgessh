@@ -1,5 +1,6 @@
 import { Container } from "@cloudflare/containers";
 import type { DurableObject } from "cloudflare:workers";
+import { authenticateRequest } from "./auth";
 import { buildContainerEnvVars } from "./helpers";
 import { SchedulerService } from "./scheduler";
 import { SCHEDULER_NAME } from "./constants";
@@ -58,6 +59,14 @@ export class EdgeSSH extends Container<any> {
 
   async fetch(request: Request) {
     const url = new URL(request.url);
+    const isPublicPath = url.pathname === "/api/version" || url.pathname.startsWith("/container/health");
+    if (!isPublicPath) {
+      try {
+        await authenticateRequest(request, this.env);
+      } catch (e: any) {
+        return new Response(e.message || "unauthorized", { status: 401 });
+      }
+    }
 
     if (url.pathname.startsWith("/api/")) {
       return this.scheduler.handleRequest(request, url);

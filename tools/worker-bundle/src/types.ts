@@ -14,6 +14,8 @@ export type WorkerEnv = {
   LOOPHOLE_STORE_URL?: string;
   AWS_ACCESS_KEY_ID?: string;
   AWS_SECRET_ACCESS_KEY?: string;
+  EDGESSH_AUTH_SECRET?: string;
+  VUMELA_BASE_URL?: string;
 };
 
 export type SchedulerResult = {

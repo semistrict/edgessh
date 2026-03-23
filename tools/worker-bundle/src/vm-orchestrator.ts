@@ -64,7 +64,7 @@ export class VMOrchestrator {
     // Attach loophole device (background process)
     console.log(`[boot] ${vmName}: loophole attach clone=${cloneName}`);
     const { pid: loopholePid } = await this.client.procStart(
-      ["loophole", "device", "attach", this.storeURL, cloneName],
+      ["nice", "-n", "-10", "loophole", "device", "attach", this.storeURL, cloneName],
       { name: `loophole:${vmName}`, logFile: loopholeLog }
     );
 

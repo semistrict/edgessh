@@ -3,6 +3,7 @@
 package workerapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,48 +12,55 @@ import (
 
 type Client struct {
 	WorkerURL  string
+	AuthToken  string
 	httpClient *http.Client
 }
 
-func NewClient(workerURL string) *Client {
+func NewClient(workerURL, authToken string) *Client {
 	return &Client{
 		WorkerURL:  workerURL,
+		AuthToken:  authToken,
 		httpClient: http.DefaultClient,
 	}
 }
 
-func (c *Client) get(url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
+func (c *Client) do(method, url string, requestBody io.Reader, contentType string) ([]byte, error) {
+	req, err := http.NewRequest(method, url, requestBody)
 	if err != nil {
 		return nil, err
+	}
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s", string(body))
+		return nil, fmt.Errorf("%s", string(responseBody))
 	}
-	return body, nil
+	return responseBody, nil
+}
+
+func (c *Client) get(url string) ([]byte, error) {
+	return c.do(http.MethodGet, url, nil, "")
 }
 
 func (c *Client) post(url string) ([]byte, error) {
-	req, err := http.NewRequest("POST", url, nil)
+	return c.do(http.MethodPost, url, nil, "")
+}
+
+func (c *Client) postJSON(url string, payload interface{}) ([]byte, error) {
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s", string(body))
-	}
-	return body, nil
+	return c.do(http.MethodPost, url, bytes.NewReader(data), "application/json")
 }
 
 func (c *Client) getJSON(url string, dst interface{}) error {

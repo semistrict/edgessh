@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -22,9 +23,13 @@ type Config struct {
 	APIToken string `json:"api_token,omitempty"`
 
 	// Set after `edgessh setup`
-	DONamespaceID string `json:"do_namespace_id,omitempty"`
-	ApplicationID string `json:"application_id,omitempty"`
-	WorkerURL     string `json:"worker_url,omitempty"`
+	DONamespaceID    string `json:"do_namespace_id,omitempty"`
+	ApplicationID    string `json:"application_id,omitempty"`
+	WorkerURL        string `json:"worker_url,omitempty"`
+	WorkerAuthSecret string `json:"worker_auth_secret,omitempty"`
+	SessionToken     string `json:"session_token,omitempty"`
+	SessionSubject   string `json:"session_subject,omitempty"`
+	SessionName      string `json:"session_name,omitempty"`
 
 	// Loophole store URL for R2-backed VM rootfs volumes
 	LoopholeStoreURL string `json:"loophole_store_url,omitempty"`
@@ -66,7 +71,7 @@ func PublicKeyPath() string {
 func Load() (*Config, error) {
 	data, err := os.ReadFile(Path())
 	if err != nil {
-		return nil, fmt.Errorf("not logged in, run 'edgessh login' first: %w", err)
+		return nil, fmt.Errorf("not configured, run 'edgessh setup' first: %w", err)
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
@@ -86,6 +91,17 @@ func Save(cfg *Config) error {
 	return os.WriteFile(Path(), data, 0o600)
 }
 
+func EnsureWorkerAuthSecret(cfg *Config) error {
+	if cfg.WorkerAuthSecret != "" {
+		return nil
+	}
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return err
+	}
+	cfg.WorkerAuthSecret = base64.RawURLEncoding.EncodeToString(raw[:])
+	return nil
+}
 
 func GenerateKeyPair() error {
 	if err := os.MkdirAll(KeyDir(), 0o700); err != nil {
