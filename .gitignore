@@ -1,9 +1,9 @@
 dist/
-daemon
-edgessh
-noded
-vminit
-vmpoweroff
+/daemon
+/edgessh
+/noded
+/vminit
+/vmpoweroff
 node_modules
 node_modules/
 embed/edgessh-noded
