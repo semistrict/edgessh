@@ -108,7 +108,7 @@ func cloneCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Cloning rootfs %q from checkpoint %q into %q...\n", source.Rootfs, checkpointID, newName)
-			if err := runLoophole(cfg, "clone", "--from-checkpoint", checkpointID, cfg.LoopholeStoreURL, source.Rootfs, newName); err != nil {
+			if err := runLoopholeWithStore(cfg, "clone", "--from-checkpoint", checkpointID, source.Rootfs, newName); err != nil {
 				return fmt.Errorf("loophole clone: %w", err)
 			}
 
@@ -295,7 +295,7 @@ func findVMByName(wc *workerapi.Client, name string) (*workerapi.VMInfo, error) 
 }
 
 func listRootfsCheckpoints(cfg *config.Config, rootfs string) ([]string, error) {
-	output, err := captureLoophole(cfg, "checkpoints", cfg.LoopholeStoreURL, rootfs)
+	output, err := captureLoopholeWithStore(cfg, "checkpoints", rootfs)
 	if err != nil {
 		return nil, fmt.Errorf("listing checkpoints for rootfs %q: %w", rootfs, err)
 	}

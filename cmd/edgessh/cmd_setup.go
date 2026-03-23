@@ -227,7 +227,7 @@ This master token is used to mint scoped tokens for Workers, Containers, and R2.
 			}
 
 			fmt.Println("Formatting loophole store...")
-			if err := runLoophole(cfg, "format", cfg.LoopholeStoreURL); err != nil {
+			if err := runLoopholeWithStore(cfg, "format"); err != nil {
 				return fmt.Errorf("formatting loophole store: %w", err)
 			}
 

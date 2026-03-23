@@ -107,10 +107,7 @@ func createRootfsVolume(cfg *config.Config, volumeName, image, size string) erro
 	// Create loophole volume directly from the tarball via --mkfs.
 	// The create command uploads blocks in parallel and creates an initial checkpoint.
 	fmt.Println("  Uploading to loophole volume...")
-	if err := ensureLoopholeConfig(cfg); err != nil {
-		return err
-	}
-	if err := runLoophole(cfg, "create", cfg.LoopholeStoreURL, volumeName, "--mkfs", tarPath, "--size", size); err != nil {
+	if err := runLoopholeWithStore(cfg, "create", volumeName, "--mkfs", tarPath, "--size", size); err != nil {
 		return fmt.Errorf("loophole create: %w", err)
 	}
 
@@ -313,6 +310,15 @@ func runLoophole(cfg *config.Config, args ...string) error {
 	return cmd.Run()
 }
 
+func runLoopholeWithStore(cfg *config.Config, command string, args ...string) error {
+	storeURL, err := loopholeStoreURL(cfg)
+	if err != nil {
+		return err
+	}
+	storeArgs := append([]string{command, storeURL}, args...)
+	return runLoophole(cfg, storeArgs...)
+}
+
 func captureLoophole(cfg *config.Config, args ...string) (string, error) {
 	if err := ensureLoopholeConfig(cfg); err != nil {
 		return "", err
@@ -329,6 +335,25 @@ func captureLoophole(cfg *config.Config, args ...string) (string, error) {
 		return "", err
 	}
 	return stdout.String(), nil
+}
+
+func captureLoopholeWithStore(cfg *config.Config, command string, args ...string) (string, error) {
+	storeURL, err := loopholeStoreURL(cfg)
+	if err != nil {
+		return "", err
+	}
+	storeArgs := append([]string{command, storeURL}, args...)
+	return captureLoophole(cfg, storeArgs...)
+}
+
+func loopholeStoreURL(cfg *config.Config) (string, error) {
+	if err := ensureLoopholeConfig(cfg); err != nil {
+		return "", err
+	}
+	if cfg.LoopholeStoreURL == "" {
+		return "", fmt.Errorf("missing loophole store URL")
+	}
+	return cfg.LoopholeStoreURL, nil
 }
 
 func ensureLoopholeConfig(cfg *config.Config) error {
