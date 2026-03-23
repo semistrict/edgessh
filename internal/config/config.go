@@ -8,20 +8,38 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
 type Config struct {
-	OAuthToken   string `json:"oauth_token"`
-	RefreshToken string `json:"refresh_token"`
-	Expiry       string `json:"expiry"`
-	AccountID    string `json:"account_id"`
+	// Master API token — only used to mint scoped tokens during setup.
+	// Needs "User > API Tokens > Edit" permission.
+	MasterToken string `json:"master_token"`
+	AccountID   string `json:"account_id"`
+
+	// Scoped API token for Workers/Containers management (minted during setup)
+	APIToken string `json:"api_token,omitempty"`
+
 	// Set after `edgessh setup`
 	DONamespaceID string `json:"do_namespace_id,omitempty"`
 	ApplicationID string `json:"application_id,omitempty"`
 	WorkerURL     string `json:"worker_url,omitempty"`
+
+	// Loophole store URL for R2-backed VM rootfs volumes
+	LoopholeStoreURL string `json:"loophole_store_url,omitempty"`
+	// R2 S3 credentials for loophole (minted during setup)
+	R2AccessKeyID     string `json:"r2_access_key_id,omitempty"`
+	R2SecretAccessKey string `json:"r2_secret_access_key,omitempty"`
+}
+
+// BearerToken returns the scoped API token for day-to-day API calls.
+// Falls back to master token if scoped token not yet created.
+func (c *Config) BearerToken() string {
+	if c.APIToken != "" {
+		return c.APIToken
+	}
+	return c.MasterToken
 }
 
 func Dir() string {
@@ -68,16 +86,6 @@ func Save(cfg *Config) error {
 	return os.WriteFile(Path(), data, 0o600)
 }
 
-func (c *Config) IsTokenExpired() bool {
-	if c.Expiry == "" {
-		return true
-	}
-	t, err := time.Parse(time.RFC3339, c.Expiry)
-	if err != nil {
-		return true
-	}
-	return time.Now().After(t)
-}
 
 func GenerateKeyPair() error {
 	if err := os.MkdirAll(KeyDir(), 0o700); err != nil {

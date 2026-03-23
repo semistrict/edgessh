@@ -1,7 +1,14 @@
 dist/
+daemon
+edgessh
+noded
+vminit
+vmpoweroff
+node_modules
+node_modules/
 embed/edgessh-noded
 embed/edgessh-image.tar.gz
 .wrangler/
+.claude/
 scripts/
-daemon
-vminit
+tools/worker-bundle/node_modules/

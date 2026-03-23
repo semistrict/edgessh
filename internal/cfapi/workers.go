@@ -1,4 +1,4 @@
-package api
+package cfapi
 
 import (
 	"bytes"
@@ -8,26 +8,37 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-
-	"github.com/anthropics/edgessh/internal/auth"
-
-	edgesshEmbed "github.com/anthropics/edgessh/embed"
+	"os"
+	"os/exec"
+	"path/filepath"
 )
 
 // workerMetadata builds the metadata JSON dynamically.
 // On first deploy, includes migrations with new_sqlite_classes.
 // On subsequent deploys, omits migrations to avoid the "already exists" error.
-func workerMetadata(firstTime bool) ([]byte, error) {
+func workerMetadata(firstTime bool, vars map[string]string) ([]byte, error) {
+	bindings := []map[string]string{
+		{
+			"type":       "durable_object_namespace",
+			"name":       "EDGESSH",
+			"class_name": "EdgeSSH",
+		},
+	}
+	// Add plain text bindings for loophole config
+	for k, v := range vars {
+		if v != "" {
+			bindings = append(bindings, map[string]string{
+				"type": "plain_text",
+				"name": k,
+				"text": v,
+			})
+		}
+	}
+
 	meta := map[string]any{
 		"main_module":        "worker.mjs",
 		"compatibility_date": "2026-03-20",
-		"bindings": []map[string]string{
-			{
-				"type":       "durable_object_namespace",
-				"name":       "EDGESSH",
-				"class_name": "EdgeSSH",
-			},
-		},
+		"bindings":           bindings,
 		"containers": []map[string]string{
 			{"class_name": "EdgeSSH"},
 		},
@@ -43,14 +54,56 @@ func workerMetadata(firstTime bool) ([]byte, error) {
 	return json.Marshal(meta)
 }
 
+func bundledWorkerJS() ([]byte, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getwd: %w", err)
+	}
+
+	bundleDir := filepath.Join(root, "tools", "worker-bundle")
+	if _, err := os.Stat(filepath.Join(bundleDir, "package.json")); err != nil {
+		return nil, fmt.Errorf("worker bundle project not found: %w", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(bundleDir, "node_modules")); err != nil {
+		install := exec.Command("bun", "install")
+		install.Dir = bundleDir
+		install.Stdout = os.Stdout
+		install.Stderr = os.Stderr
+		if err := install.Run(); err != nil {
+			return nil, fmt.Errorf("bun install: %w", err)
+		}
+	}
+
+	build := exec.Command("bun", "run", "build")
+	build.Dir = bundleDir
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		return nil, fmt.Errorf("bun build: %w", err)
+	}
+
+	outPath := filepath.Join(root, "dist", "worker-bundle", "worker.mjs")
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading bundled worker: %w", err)
+	}
+	return data, nil
+}
+
 // UploadWorker uploads the edgessh Worker script via the Workers API.
 // Uses multipart/form-data exactly as wrangler does:
 // - "metadata" part: application/json
 // - module part: application/javascript+module for ESM
-func (c *Client) UploadWorker(firstTime bool) error {
-	metadataJSON, err := workerMetadata(firstTime)
+func (c *Client) UploadWorker(firstTime bool, vars map[string]string) error {
+	metadataJSON, err := workerMetadata(firstTime, vars)
 	if err != nil {
 		return fmt.Errorf("building metadata: %w", err)
+	}
+
+	workerJS, err := bundledWorkerJS()
+	if err != nil {
+		return fmt.Errorf("bundling worker: %w", err)
 	}
 
 	var buf bytes.Buffer
@@ -74,7 +127,7 @@ func (c *Client) UploadWorker(firstTime bool) error {
 	if err != nil {
 		return fmt.Errorf("creating module part: %w", err)
 	}
-	modulePart.Write(edgesshEmbed.WorkerJS)
+	modulePart.Write(workerJS)
 
 	writer.Close()
 
@@ -82,6 +135,16 @@ func (c *Client) UploadWorker(firstTime bool) error {
 		fmt.Sprintf("%s/scripts/edgessh", c.workersURL()),
 		&buf, writer.FormDataContentType(), nil,
 	)
+}
+
+// DeleteWorker deletes the edgessh Worker script.
+func (c *Client) DeleteWorker() error {
+	return c.doDELETE(fmt.Sprintf("%s/scripts/edgessh", c.workersURL()))
+}
+
+// DeleteDONamespace deletes a Durable Object namespace and all its instances/storage.
+func (c *Client) DeleteDONamespace(namespaceID string) error {
+	return c.doDELETE(fmt.Sprintf("%s/accounts/%s/workers/durable_objects/namespaces/%s", BaseAPIURL, c.cfg.AccountID, namespaceID))
 }
 
 type DONamespace struct {
@@ -127,13 +190,9 @@ func (c *Client) GetWorkersSubdomain() (string, error) {
 
 // WorkerExists checks if the edgessh worker script already exists.
 func (c *Client) WorkerExists() (bool, error) {
-	if err := auth.EnsureValidToken(c.cfg); err != nil {
-		return false, err
-	}
-
 	url := fmt.Sprintf("%s/scripts/edgessh", c.workersURL())
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("Authorization", "Bearer "+c.cfg.OAuthToken)
+	req.Header.Set("Authorization", "Bearer "+c.cfg.BearerToken())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

@@ -16,13 +16,24 @@ type WSConn struct {
 	reader io.Reader
 }
 
+// Wrap exposes an existing WebSocket as a net.Conn.
+func Wrap(ws *websocket.Conn) net.Conn {
+	return &WSConn{ws: ws}
+}
+
 // Dial opens a WebSocket to the SSH tunnel endpoint and returns it as a net.Conn.
 func Dial(wsURL, token string) (net.Conn, error) {
-	dialer := websocket.Dialer{}
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		headers.Set("Authorization", "Bearer "+token)
+	}
 	headers.Set("User-Agent", "edgessh")
+	return DialWithHeaders(wsURL, headers)
+}
 
+// DialWithHeaders opens a WebSocket and returns it as a net.Conn.
+func DialWithHeaders(wsURL string, headers http.Header) (net.Conn, error) {
+	dialer := websocket.Dialer{}
 	ws, _, err := dialer.Dial(wsURL, headers)
 	if err != nil {
 		return nil, err

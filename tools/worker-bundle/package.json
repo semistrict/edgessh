@@ -1,0 +1,13 @@
+{
+  "name": "edgessh-worker-bundle",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/worker.ts --outfile ../../dist/worker-bundle/worker.mjs --format esm --target browser --external cloudflare:workers",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "file:../../../cloudflare-containers"
+  }
+}

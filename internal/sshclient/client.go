@@ -13,10 +13,73 @@ import (
 	"golang.org/x/term"
 )
 
+func runInteractive(session *ssh.Session, echo uint32, start func() error) error {
+	fd := int(os.Stdin.Fd())
+	isTerminal := term.IsTerminal(fd)
+	if isTerminal {
+		oldState, err := term.MakeRaw(fd)
+		if err != nil {
+			return fmt.Errorf("setting raw terminal: %w", err)
+		}
+		defer term.Restore(fd, oldState)
+
+		w, h, _ := term.GetSize(fd)
+		if err := session.RequestPty("xterm-256color", h, w, ssh.TerminalModes{
+			ssh.ECHO:          echo,
+			ssh.TTY_OP_ISPEED: 14400,
+			ssh.TTY_OP_OSPEED: 14400,
+		}); err != nil {
+			return fmt.Errorf("requesting PTY: %w", err)
+		}
+
+		sigWinch := make(chan os.Signal, 1)
+		signal.Notify(sigWinch, syscall.SIGWINCH)
+		go func() {
+			for range sigWinch {
+				w, h, _ := term.GetSize(fd)
+				session.WindowChange(h, w)
+			}
+		}()
+		defer signal.Stop(sigWinch)
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("opening session stdin: %w", err)
+	}
+
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	copyDone := make(chan struct{})
+	go func() {
+		defer close(copyDone)
+		_, _ = io.Copy(stdin, os.Stdin)
+		_ = stdin.Close()
+	}()
+
+	if err := start(); err != nil {
+		return err
+	}
+
+	err = session.Wait()
+	<-copyDone
+	return err
+}
+
 // Connect establishes an SSH client connection over an existing net.Conn
 // (typically a WebSocket). Returns the ssh.Client ready for use.
 func Connect(conn net.Conn) (*ssh.Client, error) {
-	keyData, err := os.ReadFile(config.PrivateKeyPath())
+	return connect(conn, "cloudchamber", config.PrivateKeyPath())
+}
+
+// ConnectVM establishes an SSH client connection directly to a VM over an existing net.Conn.
+func ConnectVM(conn net.Conn) (*ssh.Client, error) {
+	return connect(conn, "root", config.PrivateKeyPath())
+}
+
+func connect(conn net.Conn, user, keyPath string) (*ssh.Client, error) {
+	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading private key: %w", err)
 	}
@@ -27,7 +90,7 @@ func Connect(conn net.Conn) (*ssh.Client, error) {
 	}
 
 	sshConfig := &ssh.ClientConfig{
-		User: "cloudchamber",
+		User: user,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
@@ -50,49 +113,16 @@ func Shell(client *ssh.Client) error {
 	}
 	defer session.Close()
 
-	// Put local terminal into raw mode
-	fd := int(os.Stdin.Fd())
-	if term.IsTerminal(fd) {
-		oldState, err := term.MakeRaw(fd)
-		if err != nil {
-			return fmt.Errorf("setting raw terminal: %w", err)
-		}
-		defer term.Restore(fd, oldState)
-
-		w, h, _ := term.GetSize(fd)
-		if err := session.RequestPty("xterm-256color", h, w, ssh.TerminalModes{
-			ssh.ECHO:          1,
-			ssh.TTY_OP_ISPEED: 14400,
-			ssh.TTY_OP_OSPEED: 14400,
-		}); err != nil {
-			return fmt.Errorf("requesting PTY: %w", err)
-		}
-
-		// Handle terminal resize
-		sigWinch := make(chan os.Signal, 1)
-		signal.Notify(sigWinch, syscall.SIGWINCH)
-		go func() {
-			for range sigWinch {
-				w, h, _ := term.GetSize(fd)
-				session.WindowChange(h, w)
-			}
-		}()
-		defer signal.Stop(sigWinch)
-	}
-
 	// Set env vars — Setenv may be rejected by the server, that's ok
 	session.Setenv("TERM", "xterm-256color")
 	session.Setenv("SHELL", "/bin/bash")
 
-	session.Stdin = os.Stdin
-	session.Stdout = os.Stdout
-	session.Stderr = os.Stderr
-
-	if err := session.Shell(); err != nil {
-		return fmt.Errorf("starting shell: %w", err)
-	}
-
-	return session.Wait()
+	return runInteractive(session, 1, func() error {
+		if err := session.Shell(); err != nil {
+			return fmt.Errorf("starting shell: %w", err)
+		}
+		return nil
+	})
 }
 
 // Exec runs a command and returns the exit code.
@@ -108,6 +138,18 @@ func Exec(client *ssh.Client, command string) error {
 	session.Stderr = os.Stderr
 
 	return session.Run(command)
+}
+
+// ExecInteractive runs a command with a PTY attached when stdin is a terminal.
+func ExecInteractive(client *ssh.Client, command string) error {
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	return runInteractive(session, 0, func() error {
+		return session.Start(command)
+	})
 }
 
 // Download copies a remote file to a local writer.

@@ -1,4 +1,4 @@
-package api
+package cfapi
 
 import (
 	"bytes"
@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/anthropics/edgessh/internal/auth"
 	"github.com/anthropics/edgessh/internal/config"
 )
 
@@ -21,6 +20,34 @@ type Client struct {
 
 func NewClient(cfg *config.Config) *Client {
 	return &Client{cfg: cfg, httpClient: http.DefaultClient}
+}
+
+// GetAccountID fetches the account ID from the Cloudflare API.
+func (c *Client) GetAccountID() (string, error) {
+	var accounts []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := c.doGET(BaseAPIURL+"/accounts?per_page=5", &accounts); err != nil {
+		return "", err
+	}
+	if len(accounts) == 0 {
+		return "", fmt.Errorf("no accounts found")
+	}
+	if len(accounts) == 1 {
+		return accounts[0].ID, nil
+	}
+	fmt.Println("Multiple accounts found:")
+	for i, a := range accounts {
+		fmt.Printf("  [%d] %s (%s)\n", i+1, a.Name, a.ID)
+	}
+	fmt.Print("Select account [1]: ")
+	var choice int
+	fmt.Scanln(&choice)
+	if choice < 1 || choice > len(accounts) {
+		choice = 1
+	}
+	return accounts[choice-1].ID, nil
 }
 
 func (c *Client) containersURL() string {
@@ -74,15 +101,11 @@ func (c *Client) doJSONBody(method, url string, body interface{}, result interfa
 // do is the core HTTP method. Sends a request, reads the response, unwraps
 // Cloudflare's {success, result, errors} envelope, and unmarshals into result.
 func (c *Client) do(method, url string, body io.Reader, contentType string, result interface{}) error {
-	if err := auth.EnsureValidToken(c.cfg); err != nil {
-		return err
-	}
-
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.OAuthToken)
+	req.Header.Set("Authorization", "Bearer "+c.cfg.BearerToken())
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
