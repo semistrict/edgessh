@@ -4,6 +4,17 @@ import { SchedulerStore } from "./scheduler-store";
 import { VMOrchestrator, type VMInfo } from "./vm-orchestrator";
 import type { DurableObjectStubLike, SchedulerResult, WorkerEnv } from "./types";
 
+function ownerFromPublicKey(pubKey: string): string | null {
+  const trimmed = pubKey.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 3) return null;
+  const comment = parts.slice(2).join(" ").trim();
+  if (!comment) return null;
+  const user = comment.split("@", 1)[0]?.trim();
+  return user || null;
+}
+
 export class SchedulerVMService {
   constructor(
     private readonly store: SchedulerStore,
@@ -36,7 +47,7 @@ export class SchedulerVMService {
 
     const sshPubKey = requestedPubKey || vm.ssh_pubkey || "";
     if (requestedPubKey && requestedPubKey !== vm.ssh_pubkey) {
-      this.store.updateVMPubKey(name, requestedPubKey);
+      this.store.updateVMPubKey(name, requestedPubKey, ownerFromPublicKey(requestedPubKey));
     }
 
     console.log(`[ensureVMRunning] ${name}: container_id=${vm.container_id}`);

@@ -8,7 +8,9 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -130,13 +132,66 @@ func GenerateKeyPair() error {
 		return err
 	}
 	pubBytes := ssh.MarshalAuthorizedKey(sshPub)
+	if owner := currentUsername(); owner != "" {
+		pubBytes = append(pubBytes[:len(pubBytes)-1], []byte(" "+owner+"\n")...)
+	}
 	return os.WriteFile(PublicKeyPath(), pubBytes, 0o644)
 }
 
 func ReadPublicKey() (string, error) {
+	if err := GenerateKeyPair(); err != nil {
+		return "", err
+	}
+	if err := ensurePublicKeyComment(); err != nil {
+		return "", err
+	}
 	data, err := os.ReadFile(PublicKeyPath())
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func ensurePublicKeyComment() error {
+	owner := currentUsername()
+	if owner == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(PublicKeyPath())
+	if err != nil {
+		return err
+	}
+
+	pubKey, comment, _, _, err := ssh.ParseAuthorizedKey(data)
+	if err != nil {
+		return nil
+	}
+	if strings.TrimSpace(comment) != "" {
+		return nil
+	}
+
+	normalized := append(ssh.MarshalAuthorizedKey(pubKey)[:len(ssh.MarshalAuthorizedKey(pubKey))-1], []byte(" "+owner+"\n")...)
+	return os.WriteFile(PublicKeyPath(), normalized, 0o644)
+}
+
+func currentUsername() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return usernameOnly(u.Username)
+	}
+	return usernameOnly(os.Getenv("USER"))
+}
+
+func usernameOnly(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if i := strings.LastIndex(value, `\`); i >= 0 {
+		value = value[i+1:]
+	}
+	if i := strings.Index(value, "@"); i >= 0 {
+		value = value[:i]
+	}
+	return strings.TrimSpace(value)
 }

@@ -29,6 +29,7 @@ export type VMRecord = {
   name: string;
   rootfs: string;
   ssh_pubkey: string | null;
+  owner: string | null;
   container_id: string | null;
   created_at: string;
 };

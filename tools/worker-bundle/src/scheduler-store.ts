@@ -16,6 +16,7 @@ export class SchedulerStore {
         name TEXT PRIMARY KEY,
         rootfs TEXT NOT NULL,
         ssh_pubkey TEXT,
+        owner TEXT,
         container_id TEXT,
         created_at TEXT NOT NULL
       );
@@ -37,6 +38,11 @@ export class SchedulerStore {
       this.exec(`ALTER TABLE vms ADD COLUMN ssh_pubkey TEXT`);
     }
 
+    const ownerCol = info.find((c) => c.name === "owner");
+    if (!ownerCol) {
+      this.exec(`ALTER TABLE vms ADD COLUMN owner TEXT`);
+    }
+
     const vmInfoCol = info.find((c) => c.name === "vm_info");
     if (!vmInfoCol) {
       this.exec(`ALTER TABLE vms ADD COLUMN vm_info TEXT`);
@@ -51,7 +57,7 @@ export class SchedulerStore {
 
   findVM(name: string): VMRecord | undefined {
     return this.one<VMRecord>(
-      "SELECT name, rootfs, ssh_pubkey, container_id FROM vms WHERE name = ?",
+      "SELECT name, rootfs, ssh_pubkey, owner, container_id FROM vms WHERE name = ?",
       name
     );
   }
@@ -61,12 +67,13 @@ export class SchedulerStore {
     return rows.length > 0;
   }
 
-  insertVM(name: string, rootfs: string, sshPubKey: string) {
+  insertVM(name: string, rootfs: string, sshPubKey: string, owner: string | null) {
     this.exec(
-      "INSERT INTO vms (name, rootfs, ssh_pubkey, container_id, created_at) VALUES (?, ?, ?, NULL, ?)",
+      "INSERT INTO vms (name, rootfs, ssh_pubkey, owner, container_id, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
       name,
       rootfs,
       sshPubKey,
+      owner,
       new Date().toISOString()
     );
   }
@@ -102,8 +109,8 @@ export class SchedulerStore {
     return id;
   }
 
-  updateVMPubKey(name: string, sshPubKey: string) {
-    this.exec("UPDATE vms SET ssh_pubkey = ? WHERE name = ?", sshPubKey, name);
+  updateVMPubKey(name: string, sshPubKey: string, owner: string | null) {
+    this.exec("UPDATE vms SET ssh_pubkey = ?, owner = ? WHERE name = ?", sshPubKey, owner, name);
   }
 
   assignVMToContainer(name: string, containerID: string) {
@@ -120,7 +127,7 @@ export class SchedulerStore {
 
   listVMs() {
     return this.all(
-      "SELECT v.name, v.container_id, v.rootfs, v.created_at, c.do_name FROM vms v LEFT JOIN containers c ON v.container_id = c.id"
+      "SELECT v.name, v.owner, v.container_id, v.rootfs, v.created_at, c.do_name FROM vms v LEFT JOIN containers c ON v.container_id = c.id"
     );
   }
 

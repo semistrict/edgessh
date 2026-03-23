@@ -2,6 +2,17 @@ import { SchedulerStore } from "./scheduler-store";
 import { SchedulerVMService } from "./scheduler-vm";
 import type { DurableObjectStateLike, WorkerEnv } from "./types";
 
+function ownerFromPublicKey(pubKey: string): string | null {
+  const trimmed = pubKey.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 3) return null;
+  const comment = parts.slice(2).join(" ").trim();
+  if (!comment) return null;
+  const user = comment.split("@", 1)[0]?.trim();
+  return user || null;
+}
+
 export class SchedulerService {
   private readonly store: SchedulerStore;
   private readonly vm: SchedulerVMService;
@@ -62,7 +73,7 @@ export class SchedulerService {
       return new Response(`VM "${name}" already exists`, { status: 409 });
     }
 
-    this.store.insertVM(name, rootfs, sshPubKey);
+    this.store.insertVM(name, rootfs, sshPubKey, ownerFromPublicKey(sshPubKey));
 
     try {
       const result = await this.vm.ensureVMRunning(name, sshPubKey);

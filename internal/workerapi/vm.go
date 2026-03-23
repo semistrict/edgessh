@@ -9,6 +9,7 @@ import (
 
 type VMInfo struct {
 	Name        string `json:"name"`
+	Owner       string `json:"owner"`
 	ContainerID string `json:"container_id"`
 	DOName      string `json:"do_name"`
 	Rootfs      string `json:"rootfs"`
@@ -74,4 +75,3 @@ func (c *Client) GetVMStats(name string) (map[string]interface{}, error) {
 	var stats map[string]interface{}
 	return stats, c.getJSON(u, &stats)
 }
-

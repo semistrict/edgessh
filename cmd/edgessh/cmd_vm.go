@@ -95,7 +95,7 @@ func listCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("%-20s %-10s %-12s %-10s\n", "VM", "STATUS", "CONTAINER", "ROOTFS")
+			fmt.Printf("%-20s %-12s %-10s %-12s %-10s\n", "VM", "OWNER", "STATUS", "CONTAINER", "ROOTFS")
 			for _, vm := range vms {
 				status := "stopped"
 				cid := "-"
@@ -103,7 +103,11 @@ func listCmd() *cobra.Command {
 					status = "running"
 					cid = vm.ContainerID
 				}
-				fmt.Printf("%-20s %-10s %-12s %-10s\n", vm.Name, status, cid, vm.Rootfs)
+				owner := vm.Owner
+				if owner == "" {
+					owner = "-"
+				}
+				fmt.Printf("%-20s %-12s %-10s %-12s %-10s\n", vm.Name, owner, status, cid, vm.Rootfs)
 			}
 			return nil
 		},

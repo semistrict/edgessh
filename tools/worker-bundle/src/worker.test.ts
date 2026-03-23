@@ -19,6 +19,7 @@ class FakeSQL {
         { name: "name", notnull: 1 },
         { name: "rootfs", notnull: 1 },
         { name: "ssh_pubkey", notnull: 0 },
+        { name: "owner", notnull: 0 },
         { name: "container_id", notnull: 0 },
         { name: "created_at", notnull: 1 },
       ]);
@@ -27,13 +28,14 @@ class FakeSQL {
       const row = this.vms.get(args[0]);
       return this.rows(row ? [{ name: row.name }] : []);
     }
-    if (q.startsWith("INSERT INTO vms (name, rootfs, ssh_pubkey, container_id, created_at) VALUES")) {
+    if (q.startsWith("INSERT INTO vms (name, rootfs, ssh_pubkey, owner, container_id, created_at) VALUES")) {
       this.vms.set(args[0], {
         name: args[0],
         rootfs: args[1],
         ssh_pubkey: args[2],
+        owner: args[3],
         container_id: null,
-        created_at: args[3],
+        created_at: args[4],
       });
       return this.rows([]);
     }
@@ -41,13 +43,14 @@ class FakeSQL {
       this.vms.delete(args[0]);
       return this.rows([]);
     }
-    if (q.startsWith("SELECT name, rootfs, ssh_pubkey, container_id FROM vms WHERE name = ?")) {
+    if (q.startsWith("SELECT name, rootfs, ssh_pubkey, owner, container_id FROM vms WHERE name = ?")) {
       const row = this.vms.get(args[0]);
       return this.rows(row ? [row] : []);
     }
-    if (q.startsWith("UPDATE vms SET ssh_pubkey = ? WHERE name = ?")) {
-      const row = this.vms.get(args[1]);
+    if (q.startsWith("UPDATE vms SET ssh_pubkey = ?, owner = ? WHERE name = ?")) {
+      const row = this.vms.get(args[2]);
       if (row) row.ssh_pubkey = args[0];
+      if (row) row.owner = args[1];
       return this.rows([]);
     }
     if (q.startsWith("UPDATE vms SET container_id = ? WHERE name = ?")) {
@@ -167,6 +170,24 @@ describe("scheduler service", () => {
     const resp = await scheduler.scheduleVMCreate(url);
     expect(resp.status).toBe(200);
     expect(sql.vms.get("vm1")?.ssh_pubkey).toBe("ssh-ed25519 AAA");
+    expect(sql.vms.get("vm1")?.owner).toBeNull();
+  });
+
+  test("scheduleVMCreate derives owner from the ssh public key comment", async () => {
+    const { ctx, env, sql } = createSchedulerHarness();
+    const scheduler = new SchedulerService(ctx as any, env as any);
+    (scheduler as any).vm.ensureVMRunning = async (_name: string) =>
+      ({
+        do_name: "host-0",
+        container_id: "host0id",
+        rootfs: "basev3",
+        stub: { fetch: async () => new Response("ok") },
+      }) as any;
+
+    const url = new URL("https://example.com/api/vm/create?name=vm2&rootfs=basev3&ssh_pubkey=ssh-ed25519%20AAA%20ramon@mbp");
+    const resp = await scheduler.scheduleVMCreate(url);
+    expect(resp.status).toBe(200);
+    expect(sql.vms.get("vm2")?.owner).toBe("ramon");
   });
 
   test("vmSSHInfo forwards the requested ssh key into ensureVMRunning", async () => {
@@ -175,6 +196,7 @@ describe("scheduler service", () => {
       name: "vm1",
       rootfs: "basev3",
       ssh_pubkey: "old-key",
+      owner: null,
       container_id: null,
       created_at: new Date().toISOString(),
     });
