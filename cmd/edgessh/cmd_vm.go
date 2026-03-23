@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/anthropics/edgessh/internal/cfapi"
@@ -73,6 +74,61 @@ func createCmd() *cobra.Command {
 	return cmd
 }
 
+func cloneCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "clone SOURCE_VM:CHECKPOINT NEW_VM_NAME",
+		Short: "Clone a VM rootfs from a checkpoint into a new VM",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sourceSpec := args[0]
+			newName := args[1]
+
+			sourceVM, checkpointID, ok := strings.Cut(sourceSpec, ":")
+			if !ok || sourceVM == "" || checkpointID == "" {
+				return fmt.Errorf("source must be SOURCE_VM:CHECKPOINT")
+			}
+
+			cfg, err := requireWorkerAccess()
+			if err != nil {
+				return err
+			}
+			wc := workerapi.NewClient(cfg.WorkerURL, cfg.SessionToken)
+
+			source, err := findVMByName(wc, sourceVM)
+			if err != nil {
+				return err
+			}
+
+			checkpoints, err := listRootfsCheckpoints(cfg, source.Rootfs)
+			if err != nil {
+				return err
+			}
+			if !slices.Contains(checkpoints, checkpointID) {
+				return fmt.Errorf("checkpoint %q not found for VM %q", checkpointID, sourceVM)
+			}
+
+			fmt.Printf("Cloning rootfs %q from checkpoint %q into %q...\n", source.Rootfs, checkpointID, newName)
+			if err := runLoophole(cfg, "clone", "--from-checkpoint", checkpointID, cfg.LoopholeStoreURL, source.Rootfs, newName); err != nil {
+				return fmt.Errorf("loophole clone: %w", err)
+			}
+
+			pubKey, err := config.ReadPublicKey()
+			if err != nil {
+				return fmt.Errorf("reading SSH public key: %w", err)
+			}
+
+			fmt.Printf("Creating VM %q from cloned rootfs %q...\n", newName, newName)
+			vm, err := wc.CreateVM(newName, newName, strings.TrimSpace(pubKey))
+			if err != nil {
+				return fmt.Errorf("creating VM: %w", err)
+			}
+
+			fmt.Printf("VM %s ready on container %s! Connect with: edgessh ssh %s\n", newName, vm.ContainerID, newName)
+			return nil
+		},
+	}
+}
+
 func listCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -108,6 +164,42 @@ func listCmd() *cobra.Command {
 					owner = "-"
 				}
 				fmt.Printf("%-20s %-12s %-10s %-12s %-10s\n", vm.Name, owner, status, cid, vm.Rootfs)
+			}
+			return nil
+		},
+	}
+}
+
+func checkpointsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "checkpoints VM_NAME",
+		Short: "List checkpoints for a VM's rootfs volume",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+
+			cfg, err := requireWorkerAccess()
+			if err != nil {
+				return err
+			}
+			wc := workerapi.NewClient(cfg.WorkerURL, cfg.SessionToken)
+			vm, err := findVMByName(wc, name)
+			if err != nil {
+				return err
+			}
+
+			checkpoints, err := listRootfsCheckpoints(cfg, vm.Rootfs)
+			if err != nil {
+				return err
+			}
+			if len(checkpoints) == 0 {
+				fmt.Printf("No checkpoints for VM %q (rootfs %q)\n", name, vm.Rootfs)
+				return nil
+			}
+
+			fmt.Printf("Checkpoints for VM %q (rootfs %q):\n", name, vm.Rootfs)
+			for _, checkpoint := range checkpoints {
+				fmt.Println(checkpoint)
 			}
 			return nil
 		},
@@ -187,6 +279,40 @@ func checkpointCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func findVMByName(wc *workerapi.Client, name string) (*workerapi.VMInfo, error) {
+	vms, err := wc.ListVMs()
+	if err != nil {
+		return nil, err
+	}
+	for _, vm := range vms {
+		if vm.Name == name {
+			return &vm, nil
+		}
+	}
+	return nil, fmt.Errorf("VM %q not found", name)
+}
+
+func listRootfsCheckpoints(cfg *config.Config, rootfs string) ([]string, error) {
+	output, err := captureLoophole(cfg, "checkpoints", cfg.LoopholeStoreURL, rootfs)
+	if err != nil {
+		return nil, fmt.Errorf("listing checkpoints for rootfs %q: %w", rootfs, err)
+	}
+
+	var checkpoints []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		checkpoints = append(checkpoints, fields[0])
+	}
+	return checkpoints, nil
 }
 
 func resetCmd() *cobra.Command {

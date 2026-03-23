@@ -56,21 +56,21 @@ export class VMOrchestrator {
         ? `${internalPubKey}\n${pubKey}`
         : internalPubKey;
 
-    console.log(`[boot] ${vmName}: ensureClone rootfs=${rootfsVolume}`);
-    const cloneName = await this.ensureClone(vmName, rootfsVolume);
+    const attachedVolume = rootfsVolume;
+    console.log(`[boot] ${vmName}: attach rootfs=${attachedVolume}`);
     const loopholeLog = loopholeLogPath(vmName);
     await this.client.exec(["rm", "-f", loopholeLog]);
 
     // Attach loophole device (background process)
-    console.log(`[boot] ${vmName}: loophole attach clone=${cloneName}`);
+    console.log(`[boot] ${vmName}: loophole attach volume=${attachedVolume}`);
     const { pid: loopholePid } = await this.client.procStart(
-      ["nice", "-n", "-10", "loophole", "device", "attach", this.storeURL, cloneName],
+      ["nice", "-n", "-10", "loophole", "device", "attach", this.storeURL, attachedVolume],
       { name: `loophole:${vmName}`, logFile: loopholeLog }
     );
 
     // Wait for device to appear
     console.log(`[boot] ${vmName}: polling for device`);
-    const devicePath = await this.pollForDevice(vmName, cloneName, loopholePid, loopholeLog);
+    const devicePath = await this.pollForDevice(vmName, attachedVolume, loopholePid, loopholeLog);
     if (!devicePath) {
       const wait = await this.client.procWait(loopholePid, 1);
       console.log(`[boot] ${vmName}: timed out waiting for device; loophole exited=${wait.exited} exitCode=${wait.exit_code}`);
@@ -145,7 +145,7 @@ export class VMOrchestrator {
 
     return {
       name: vmName,
-      cloneName,
+      cloneName: attachedVolume,
       subnetId,
       fcPid,
       loopholePid,
@@ -250,66 +250,9 @@ export class VMOrchestrator {
     return pubResult.stdout.trim();
   }
 
-  private async ensureClone(
-    vmName: string,
-    rootfsVolume: string
-  ): Promise<string> {
-    const cloneName = `vm-${vmName}`;
-
-    // Check if clone already exists
-    const status = await this.client.exec([
-      "loophole",
-      "status",
-      this.storeURL,
-      cloneName,
-    ]);
-    if (status.exit_code === 0) {
-      return cloneName;
-    }
-
-    // List checkpoints for the source volume
-    const cpResult = await this.client.exec([
-      "loophole",
-      "checkpoints",
-      this.storeURL,
-      rootfsVolume,
-    ]);
-    if (cpResult.exit_code !== 0 || !cpResult.stdout.trim()) {
-      throw new Error(
-        `no checkpoints for volume "${rootfsVolume}": ${cpResult.stderr}`
-      );
-    }
-
-    // Use last checkpoint (most recent)
-    const lines = cpResult.stdout.trim().split("\n");
-    const lastLine = lines[lines.length - 1].trim();
-    const checkpointId = lastLine.split(/\s+/)[0];
-
-    // Clone from checkpoint
-    const cloneResult = await this.client.exec([
-      "loophole",
-      "clone",
-      "--from-checkpoint",
-      checkpointId,
-      this.storeURL,
-      rootfsVolume,
-      cloneName,
-    ]);
-    if (cloneResult.exit_code !== 0) {
-      if (cloneResult.stderr.includes("already exists")) {
-        return cloneName;
-      }
-      throw new Error(
-        `clone failed: ${cloneResult.stderr || cloneResult.stdout}`
-      );
-    }
-
-    return cloneName;
-  }
-
   private async pollForDevice(
     vmName: string,
-    cloneName: string,
+    volumeName: string,
     loopholePid: number,
     loopholeLog: string
   ): Promise<string | null> {
@@ -329,7 +272,7 @@ export class VMOrchestrator {
       ]);
       const volsetID = cachedPs.stdout.match(/\/cache\/([^/\s]+)\/diskcache/)?.[1];
       if (volsetID) {
-        const directPath = `/proc/${loopholePid}/root/root/.loophole/fuse/${volsetID}/${cloneName}/file`;
+        const directPath = `/proc/${loopholePid}/root/root/.loophole/fuse/${volsetID}/${volumeName}/file`;
         const stat = await this.client.exec(["stat", directPath]);
         if (stat.exit_code === 0) {
           if (i === 0 || i % 10 === 9) {
@@ -342,7 +285,7 @@ export class VMOrchestrator {
       const fuseDevice = await this.client.exec([
         "sh",
         "-c",
-        `${loopholeRoots.map((d) => `find "${d}/fuse" -maxdepth 3 -path '*/${cloneName}/file' 2>/dev/null`).join("; ")} | head -1`,
+        `${loopholeRoots.map((d) => `find "${d}/fuse" -maxdepth 3 -path '*/${volumeName}/file' 2>/dev/null`).join("; ")} | head -1`,
       ]);
       const fusePath = fuseDevice.stdout.trim();
       if (fusePath) {
@@ -366,7 +309,7 @@ export class VMOrchestrator {
         try {
           const raw = await this.client.uds(socket, "/status");
           const status = JSON.parse(raw);
-          if (status.volume === cloneName && status.store_url === this.storeURL) {
+          if (status.volume === volumeName && status.store_url === this.storeURL) {
             if (status.device) {
               const deviceCandidates = [
                 status.device,
@@ -378,7 +321,7 @@ export class VMOrchestrator {
               }
             }
             if (i === 0 || i % 10 === 9) {
-              console.log(`[boot] ${vmName}: socket ${socket} matched volume=${cloneName} but no device yet`);
+              console.log(`[boot] ${vmName}: socket ${socket} matched volume=${volumeName} but no device yet`);
             }
           }
         } catch (e: any) {
@@ -392,7 +335,7 @@ export class VMOrchestrator {
             "sh",
             "-c",
             `printf 'attach_pid=%s root_sock_count=%s slash_sock_count=%s' \
-              "$(ps -ef | awk '/loophole device attach .*${cloneName}/ && !/awk/ {c++} END {print c+0}')" \
+              "$(ps -ef | awk '/loophole device attach .*${volumeName}/ && !/awk/ {c++} END {print c+0}')" \
               "$(find /root/.loophole -maxdepth 3 -name '*.sock' 2>/dev/null | wc -l | tr -d ' ')" \
               "$(find /.loophole -maxdepth 3 -name '*.sock' 2>/dev/null | wc -l | tr -d ' ')"`,
           ]);

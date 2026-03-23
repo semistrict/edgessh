@@ -25,6 +25,21 @@ export const worker = {
         return new Response(error.message || "unauthorized", { status: 401 });
       }
     }
+    if (url.pathname === "/api/auth/loophole-config" && request.method === "GET") {
+      try {
+        await authenticateRequest(request, env);
+        if (!env.LOOPHOLE_STORE_URL || !env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
+          return new Response("loophole config unavailable", { status: 503 });
+        }
+        return Response.json({
+          store_url: env.LOOPHOLE_STORE_URL,
+          access_key_id: env.AWS_ACCESS_KEY_ID,
+          secret_access_key: env.AWS_SECRET_ACCESS_KEY,
+        });
+      } catch (error: any) {
+        return new Response(error.message || "unauthorized", { status: 401 });
+      }
+    }
     if (url.pathname.startsWith("/api/")) {
       if (url.pathname !== "/api/version") {
         try {

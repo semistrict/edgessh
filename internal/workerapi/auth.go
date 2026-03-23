@@ -9,6 +9,12 @@ type SessionInfo struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+type LoopholeConfig struct {
+	StoreURL        string `json:"store_url"`
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+}
+
 func (c *Client) ExchangeVumelaToken(vumelaToken string) (*SessionInfo, error) {
 	body, err := c.postJSON(c.WorkerURL+"/api/auth/exchange", map[string]string{
 		"token": vumelaToken,
@@ -34,4 +40,9 @@ func (c *Client) ExchangeSharedSecret(sharedSecret string) (*SessionInfo, error)
 func (c *Client) Me() (*SessionInfo, error) {
 	var info SessionInfo
 	return &info, c.getJSON(c.WorkerURL+"/api/auth/me", &info)
+}
+
+func (c *Client) LoopholeConfig() (*LoopholeConfig, error) {
+	var cfg LoopholeConfig
+	return &cfg, c.getJSON(c.WorkerURL+"/api/auth/loophole-config", &cfg)
 }

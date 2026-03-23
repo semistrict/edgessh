@@ -69,23 +69,17 @@ This master token is used to mint scoped tokens for Workers, Containers, and R2.
 			}
 
 			// --- Deploy Worker ---
-			workerVars := map[string]string{
-				"LOOPHOLE_STORE_URL":    cfg.LoopholeStoreURL,
-				"AWS_ACCESS_KEY_ID":     cfg.R2AccessKeyID,
-				"AWS_SECRET_ACCESS_KEY": cfg.R2SecretAccessKey,
-			}
-
 			exists, _ := client.WorkerExists()
 			if !exists {
 				fmt.Println("Deploying edgessh Worker (first time)...")
 			} else {
 				fmt.Println("Updating edgessh Worker...")
 			}
-			if err := client.UploadWorker(!exists, workerVars); err != nil {
+			if err := client.UploadWorker(!exists, nil); err != nil {
 				return fmt.Errorf("uploading worker: %w", err)
 			}
-			if err := client.PutWorkerSecret("EDGESSH_AUTH_SECRET", cfg.WorkerAuthSecret); err != nil {
-				return fmt.Errorf("setting worker auth secret: %w", err)
+			if err := putWorkerSecrets(client, cfg); err != nil {
+				return err
 			}
 
 			fmt.Println("Enabling workers.dev subdomain...")
@@ -226,17 +220,9 @@ This master token is used to mint scoped tokens for Workers, Containers, and R2.
 				cfg.R2SecretAccessKey = creds.SecretAccessKey
 				cfg.LoopholeStoreURL = desiredStoreURL
 
-				fmt.Println("Re-deploying Worker with R2 credentials...")
-				newVars := map[string]string{
-					"LOOPHOLE_STORE_URL":    cfg.LoopholeStoreURL,
-					"AWS_ACCESS_KEY_ID":     cfg.R2AccessKeyID,
-					"AWS_SECRET_ACCESS_KEY": cfg.R2SecretAccessKey,
-				}
-				if err := client.UploadWorker(false, newVars); err != nil {
-					return fmt.Errorf("re-deploying worker with R2 creds: %w", err)
-				}
-				if err := client.PutWorkerSecret("EDGESSH_AUTH_SECRET", cfg.WorkerAuthSecret); err != nil {
-					return fmt.Errorf("refreshing worker auth secret: %w", err)
+				fmt.Println("Updating Worker secrets with R2 credentials...")
+				if err := putWorkerSecrets(client, cfg); err != nil {
+					return err
 				}
 			}
 
@@ -260,4 +246,26 @@ This master token is used to mint scoped tokens for Workers, Containers, and R2.
 	cmd.Flags().StringVar(&token, "token", "", "Cloudflare API token")
 	cmd.Flags().StringVar(&only, "only", "", "Deploy only a specific component: worker")
 	return cmd
+}
+
+func putWorkerSecrets(client *cfapi.Client, cfg *config.Config) error {
+	if err := client.PutWorkerSecret("EDGESSH_AUTH_SECRET", cfg.WorkerAuthSecret); err != nil {
+		return fmt.Errorf("setting worker auth secret: %w", err)
+	}
+	if cfg.LoopholeStoreURL != "" {
+		if err := client.PutWorkerSecret("LOOPHOLE_STORE_URL", cfg.LoopholeStoreURL); err != nil {
+			return fmt.Errorf("setting worker loophole store URL: %w", err)
+		}
+	}
+	if cfg.R2AccessKeyID != "" {
+		if err := client.PutWorkerSecret("AWS_ACCESS_KEY_ID", cfg.R2AccessKeyID); err != nil {
+			return fmt.Errorf("setting worker R2 access key ID: %w", err)
+		}
+	}
+	if cfg.R2SecretAccessKey != "" {
+		if err := client.PutWorkerSecret("AWS_SECRET_ACCESS_KEY", cfg.R2SecretAccessKey); err != nil {
+			return fmt.Errorf("setting worker R2 secret access key: %w", err)
+		}
+	}
+	return nil
 }

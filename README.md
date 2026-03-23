@@ -79,5 +79,10 @@ edgessh container list
 
 ## Notes
 
-- `edgessh loophole ...` runs `loophole` with the R2 credentials from your `edgessh` config.
+- `edgessh loophole ...` fetches the loophole store URL and R2 credentials from the authenticated Worker at runtime.
 - The default rootfs creation path currently expects repo-local build artifacts such as `dist/edgessh-init` and `dist/edgessh-poweroff`.
+
+## TODO
+
+- Remove the need for the CLI to receive direct R2 credentials for local `loophole create`.
+- Replace that path with presigned URLs or a worker-mediated upload flow so rootfs uploads can stay authenticated without exposing raw bucket credentials to the client.

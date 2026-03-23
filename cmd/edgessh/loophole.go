@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/edgessh/internal/config"
+	"github.com/anthropics/edgessh/internal/workerapi"
 	"github.com/spf13/cobra"
 )
 
@@ -106,6 +107,9 @@ func createRootfsVolume(cfg *config.Config, volumeName, image, size string) erro
 	// Create loophole volume directly from the tarball via --mkfs.
 	// The create command uploads blocks in parallel and creates an initial checkpoint.
 	fmt.Println("  Uploading to loophole volume...")
+	if err := ensureLoopholeConfig(cfg); err != nil {
+		return err
+	}
 	if err := runLoophole(cfg, "create", cfg.LoopholeStoreURL, volumeName, "--mkfs", tarPath, "--size", size); err != nil {
 		return fmt.Errorf("loophole create: %w", err)
 	}
@@ -300,23 +304,70 @@ func loopholeCommand(cfg *config.Config, args ...string) *exec.Cmd {
 }
 
 func runLoophole(cfg *config.Config, args ...string) error {
+	if err := ensureLoopholeConfig(cfg); err != nil {
+		return err
+	}
 	cmd := loopholeCommand(cfg, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
+func captureLoophole(cfg *config.Config, args ...string) (string, error) {
+	if err := ensureLoopholeConfig(cfg); err != nil {
+		return "", err
+	}
+	cmd := loopholeCommand(cfg, args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
+		}
+		return "", err
+	}
+	return stdout.String(), nil
+}
+
+func ensureLoopholeConfig(cfg *config.Config) error {
+	if cfg.LoopholeStoreURL != "" && cfg.R2AccessKeyID != "" && cfg.R2SecretAccessKey != "" {
+		return nil
+	}
+	if cfg.WorkerURL == "" {
+		return fmt.Errorf("missing worker URL; run 'edgessh auth login --url <WORKER_URL>' or 'edgessh setup' first")
+	}
+	if cfg.SessionToken == "" {
+		if err := ensureWorkerSession(cfg); err != nil {
+			return err
+		}
+	}
+
+	wc := workerapi.NewClient(cfg.WorkerURL, cfg.SessionToken)
+	remoteCfg, err := wc.LoopholeConfig()
+	if err != nil {
+		return fmt.Errorf("fetching loophole config from worker: %w", err)
+	}
+	cfg.LoopholeStoreURL = remoteCfg.StoreURL
+	cfg.R2AccessKeyID = remoteCfg.AccessKeyID
+	cfg.R2SecretAccessKey = remoteCfg.SecretAccessKey
+	return nil
+}
+
 func loopholeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "loophole [args...]",
-		Short:              "Run loophole with R2 credentials from edgessh config",
+		Short:              "Run loophole with R2 credentials from the authenticated worker",
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := requireSetup()
+			cfg, err := requireWorkerAccess()
 			if err != nil {
 				return err
 			}
-			// Prepend store URL if first arg is a subcommand that needs it
+			if err := ensureLoopholeConfig(cfg); err != nil {
+				return err
+			}
 			c := loopholeCommand(cfg, args...)
 			c.Stdin = os.Stdin
 			c.Stdout = os.Stdout
